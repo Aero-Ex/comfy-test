@@ -41,6 +41,11 @@ def get_platform(
         from .windows import WindowsTestPlatform
         return WindowsTestPlatform(log_callback)
     elif name == "windows_portable":
+        if sys.platform != "win32":
+            raise ValueError(
+                "windows_portable tests can only run on Windows. "
+                "On Linux/macOS, use the 'linux' or 'windows' platform instead."
+            )
         from .windows_portable import WindowsPortableTestPlatform
         return WindowsPortableTestPlatform(log_callback)
     else:

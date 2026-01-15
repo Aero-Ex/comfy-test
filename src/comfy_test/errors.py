@@ -75,3 +75,14 @@ class DownloadError(TestError):
         self.url = url
         details = f"URL: {url}" if url else None
         super().__init__(message, details)
+
+
+class WorkflowValidationError(TestError):
+    """Error during workflow validation (schema/graph errors)."""
+
+    def __init__(self, message: str, errors: list | None = None):
+        self.validation_errors = errors or []
+        details = None
+        if self.validation_errors:
+            details = "\n".join(str(e) for e in self.validation_errors)
+        super().__init__(message, details)

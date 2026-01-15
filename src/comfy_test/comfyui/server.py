@@ -1,6 +1,7 @@
 """ComfyUI server management."""
 
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Optional, Callable, List, TYPE_CHECKING
@@ -49,6 +50,8 @@ class ComfyUIServer:
         self._log = log_callback or (lambda msg: print(msg))
         self._process: Optional[subprocess.Popen] = None
         self._api: Optional[ComfyUIAPI] = None
+        self._output_thread: Optional[threading.Thread] = None
+        self._stop_output_thread = False
 
     @property
     def base_url(self) -> str:
@@ -84,8 +87,25 @@ class ComfyUIServer:
             extra_env=extra_env,
         )
 
+        # Start output reader thread
+        self._stop_output_thread = False
+        self._output_thread = threading.Thread(target=self._read_output, daemon=True)
+        self._output_thread.start()
+
         # Wait for server to be ready
         self._wait_for_ready(wait_timeout)
+
+    def _read_output(self) -> None:
+        """Read and log server output in a background thread."""
+        if not self._process:
+            return
+        try:
+            for line in self._process.stdout:
+                if self._stop_output_thread:
+                    break
+                self._log(f"  [ComfyUI] {line.rstrip()}")
+        except Exception:
+            pass  # Process may have ended
 
     def _wait_for_ready(self, timeout: int) -> None:
         """Wait for server to become responsive.
@@ -106,12 +126,13 @@ class ComfyUIServer:
         while time.time() - start_time < timeout:
             # Check if process died
             if self._process and self._process.poll() is not None:
-                stdout, stderr = self._process.communicate()
+                # Let output thread finish
+                if self._output_thread:
+                    self._stop_output_thread = True
+                    self._output_thread.join(timeout=2)
                 raise ServerError(
                     "ComfyUI server exited unexpectedly",
-                    f"Exit code: {self._process.returncode}\n"
-                    f"stdout: {stdout}\n"
-                    f"stderr: {stderr}"
+                    f"Exit code: {self._process.returncode}"
                 )
 
             try:
@@ -137,6 +158,12 @@ class ComfyUIServer:
             return
 
         self._log("Stopping ComfyUI server...")
+
+        # Stop output thread
+        if self._output_thread:
+            self._stop_output_thread = True
+            self._output_thread.join(timeout=2)
+            self._output_thread = None
 
         if self._api:
             self._api.close()

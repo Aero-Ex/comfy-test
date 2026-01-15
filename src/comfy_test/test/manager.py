@@ -8,8 +8,9 @@ from .config import TestConfig
 from .comfy_env import get_cuda_packages
 from .platform import get_platform, TestPlatform, TestPaths
 from ..comfyui.server import ComfyUIServer
+from ..comfyui.validator import WorkflowValidator
 from ..comfyui.workflow import WorkflowRunner
-from ..errors import TestError, VerificationError
+from ..errors import TestError, VerificationError, WorkflowValidationError
 
 
 class TestResult:
@@ -151,6 +152,29 @@ class TestManager:
                         api.verify_nodes(self.config.expected_nodes)
                         self._log(f"All {len(self.config.expected_nodes)} expected nodes found!")
 
+                    # Validate workflow if configured
+                    if self.config.workflow.file:
+                        self._log("\n[Step 3b/4] Validating workflow...")
+                        workflow_path = self._resolve_workflow_path(self.config.workflow.file)
+                        object_info = api.get_object_info()
+                        validator = WorkflowValidator(
+                            object_info,
+                            cuda_packages=cuda_packages,
+                            cuda_node_types=set(),  # TODO: detect from comfy-env.toml
+                        )
+                        validation_result = validator.validate_file(workflow_path)
+
+                        if not validation_result.is_valid:
+                            for err in validation_result.errors:
+                                self._log(f"  [ERROR] {err}")
+                            raise WorkflowValidationError(
+                                f"Workflow has {len(validation_result.errors)} validation error(s)",
+                                validation_result.errors
+                            )
+                        self._log(f"Workflow validation passed!")
+                        if validation_result.executable_nodes:
+                            self._log(f"  ({len(validation_result.executable_nodes)} nodes can execute without CUDA)")
+
                     # Run workflow if configured and not skipped
                     if self.config.workflow.file and not platform_config.skip_workflow:
                         self._log("\n[Step 4/4] Running test workflow...")
@@ -205,3 +229,17 @@ class TestManager:
             return [result]
         finally:
             self.config.workflow.file = original_file
+
+    def _resolve_workflow_path(self, workflow_file: str) -> Path:
+        """Resolve workflow file path relative to node directory.
+
+        Args:
+            workflow_file: Workflow filename or relative path
+
+        Returns:
+            Absolute Path to workflow file
+        """
+        workflow_path = Path(workflow_file)
+        if not workflow_path.is_absolute():
+            workflow_path = self.node_dir / workflow_file
+        return workflow_path
