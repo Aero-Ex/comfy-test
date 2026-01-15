@@ -1,0 +1,191 @@
+"""Workflow execution and monitoring."""
+
+import json
+import time
+from pathlib import Path
+from typing import Any, Dict, Optional, Callable
+
+from .api import ComfyUIAPI
+from ..errors import WorkflowError, TimeoutError
+
+
+class WorkflowRunner:
+    """Runs ComfyUI workflows and monitors their execution.
+
+    Args:
+        api: ComfyUIAPI instance connected to running server
+        log_callback: Optional callback for logging
+
+    Example:
+        >>> runner = WorkflowRunner(api)
+        >>> result = runner.run_workflow(Path("workflow.json"), timeout=120)
+        >>> print(result["status"])
+    """
+
+    def __init__(
+        self,
+        api: ComfyUIAPI,
+        log_callback: Optional[Callable[[str], None]] = None,
+    ):
+        self.api = api
+        self._log = log_callback or (lambda msg: print(msg))
+
+    def run_workflow(
+        self,
+        workflow_file: Path,
+        timeout: int = 120,
+    ) -> Dict[str, Any]:
+        """Run a workflow and wait for completion.
+
+        Args:
+            workflow_file: Path to workflow JSON file
+            timeout: Maximum seconds to wait for completion
+
+        Returns:
+            Execution result with status and outputs
+
+        Raises:
+            WorkflowError: If workflow fails or has errors
+            TimeoutError: If workflow doesn't complete in time
+            FileNotFoundError: If workflow file doesn't exist
+        """
+        workflow_file = Path(workflow_file)
+        if not workflow_file.exists():
+            raise FileNotFoundError(f"Workflow file not found: {workflow_file}")
+
+        # Load workflow
+        self._log(f"Loading workflow from {workflow_file}...")
+        with open(workflow_file, "r") as f:
+            workflow_data = json.load(f)
+
+        # Extract the prompt (workflow definition)
+        # Workflow files can have either just the prompt, or a full structure
+        if "prompt" in workflow_data:
+            prompt = workflow_data["prompt"]
+        else:
+            prompt = workflow_data
+
+        return self.run_prompt(prompt, timeout, str(workflow_file))
+
+    def run_prompt(
+        self,
+        prompt: Dict[str, Any],
+        timeout: int = 120,
+        workflow_name: str = "workflow",
+    ) -> Dict[str, Any]:
+        """Run a prompt and wait for completion.
+
+        Args:
+            prompt: Workflow prompt definition
+            timeout: Maximum seconds to wait
+            workflow_name: Name for logging
+
+        Returns:
+            Execution result
+
+        Raises:
+            WorkflowError: If workflow fails
+            TimeoutError: If workflow doesn't complete in time
+        """
+        self._log(f"Queuing workflow: {workflow_name}...")
+
+        # Queue the prompt
+        prompt_id = self.api.queue_prompt(prompt)
+        self._log(f"Queued with ID: {prompt_id}")
+
+        # Wait for completion
+        return self._wait_for_completion(prompt_id, timeout, workflow_name)
+
+    def _wait_for_completion(
+        self,
+        prompt_id: str,
+        timeout: int,
+        workflow_name: str,
+    ) -> Dict[str, Any]:
+        """Wait for workflow to complete.
+
+        Args:
+            prompt_id: ID of queued prompt
+            timeout: Maximum seconds to wait
+            workflow_name: Name for error messages
+
+        Returns:
+            Execution result
+
+        Raises:
+            WorkflowError: If workflow fails
+            TimeoutError: If workflow doesn't complete
+        """
+        self._log(f"Waiting for workflow completion (timeout: {timeout}s)...")
+
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            history = self.api.get_history(prompt_id)
+
+            if history is None:
+                # Not started yet, check queue
+                queue = self.api.get_queue()
+                pending = len(queue.get("queue_pending", []))
+                running = len(queue.get("queue_running", []))
+                self._log(f"  Queue: {running} running, {pending} pending")
+                time.sleep(2)
+                continue
+
+            # Check for completion
+            status = history.get("status", {})
+            status_str = status.get("status_str", "")
+
+            if status_str == "success":
+                self._log("Workflow completed successfully!")
+                return {
+                    "status": "success",
+                    "prompt_id": prompt_id,
+                    "outputs": history.get("outputs", {}),
+                }
+
+            if status_str == "error":
+                # Extract error details
+                messages = status.get("messages", [])
+                error_msg = self._format_error_messages(messages)
+                raise WorkflowError(
+                    f"Workflow execution failed: {error_msg}",
+                    workflow_file=workflow_name,
+                    node_error=error_msg,
+                )
+
+            # Check for node errors in execution
+            if "outputs" in history:
+                for node_id, output in history["outputs"].items():
+                    if isinstance(output, dict) and output.get("error"):
+                        raise WorkflowError(
+                            f"Node {node_id} failed",
+                            workflow_file=workflow_name,
+                            node_error=str(output.get("error")),
+                        )
+
+            # Still running
+            elapsed = int(time.time() - start_time)
+            self._log(f"  Running... ({elapsed}s elapsed)")
+            time.sleep(2)
+
+        # Timeout
+        self.api.interrupt()
+        raise TimeoutError(
+            f"Workflow did not complete within {timeout} seconds",
+            timeout_seconds=timeout,
+        )
+
+    def _format_error_messages(self, messages: list) -> str:
+        """Format error messages from workflow execution."""
+        if not messages:
+            return "Unknown error"
+
+        formatted = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                formatted.append(msg.get("message", str(msg)))
+            else:
+                formatted.append(str(msg))
+
+        return "; ".join(formatted)

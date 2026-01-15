@@ -1,0 +1,11 @@
+# Example comfy-test.toml - this is all you need in your custom node!
+
+[test]
+name = "ComfyUI-ExampleNode"
+
+[test.verification]
+expected_nodes = ["ExampleNode", "ExampleNodeAdvanced"]
+
+[test.workflow]
+file = "tests/workflows/smoke_test.json"
+timeout = 120

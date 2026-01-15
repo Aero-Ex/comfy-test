@@ -1,0 +1,99 @@
+name: ComfyUI Installation Test Matrix
+
+on:
+  workflow_call:
+    inputs:
+      node-path:
+        description: "Path to custom node directory"
+        type: string
+        default: "."
+      config-file:
+        description: "Path to comfy-test.toml config file"
+        type: string
+        default: "comfy-test.toml"
+      python-version:
+        description: "Python version for testing"
+        type: string
+        default: "3.10"
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install comfy-test
+        run: pip install comfy-test
+
+      - name: Run installation test
+        run: comfy-test run --platform linux --config ${{ inputs.config-file }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-linux
+          path: .comfy-test/
+          if-no-files-found: ignore
+
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install comfy-test
+        run: pip install comfy-test
+
+      - name: Run installation test
+        run: comfy-test run --platform windows --config ${{ inputs.config-file }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-windows
+          path: .comfy-test/
+          if-no-files-found: ignore
+
+  test-windows-portable:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install comfy-test
+        run: pip install comfy-test
+
+      - name: Run installation test
+        run: comfy-test run --platform windows-portable --config ${{ inputs.config-file }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-windows-portable
+          path: .comfy-test/
+          if-no-files-found: ignore
