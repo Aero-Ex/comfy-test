@@ -44,7 +44,82 @@ A minimal ComfyUI workflow that uses your nodes. Export from ComfyUI.
 1. **Setup** - Clones ComfyUI, creates environment, installs dependencies
 2. **Install** - Copies your node, runs `install.py`, installs `requirements.txt`
 3. **Verify** - Starts ComfyUI, checks your nodes appear in `/object_info`
-4. **Execute** - Runs your test workflow, verifies it completes without errors
+4. **Validate** - Runs 4-level workflow validation (see below)
+5. **Execute** - Runs your test workflow, verifies it completes without errors
+
+## Workflow Validation (4 Levels)
+
+When a workflow file is configured, comfy-test runs comprehensive validation before execution:
+
+| Level | Name | What It Checks |
+|-------|------|----------------|
+| 1 | **Schema** | Widget values match allowed enums, types, and ranges |
+| 2 | **Graph** | Connections are valid, all referenced nodes exist |
+| 3 | **Introspection** | Node definitions are well-formed (INPUT_TYPES, RETURN_TYPES, FUNCTION) |
+| 4 | **Partial Execution** | Runs non-CUDA nodes to verify they work |
+
+### Level 1: Schema Validation
+
+Validates widget values in your workflow against node schemas from `/object_info`:
+
+- **Enum values** - Checks dropdown selections are in the allowed list
+- **INT/FLOAT ranges** - Validates numbers are within min/max bounds
+- **Type checking** - Ensures STRING, BOOLEAN, INT, FLOAT values have correct types
+
+```
+[schema] Node 5 (LoadTrellis2Models): 'attn_backend': 'auto' not in allowed values ['flash_attn', 'xformers', 'sdpa', 'sageattn']
+```
+
+### Level 2: Graph Validation
+
+Validates the workflow graph structure:
+
+- **Node existence** - All linked nodes actually exist
+- **Connection types** - Output types match input types (IMAGE → IMAGE)
+- **Slot validity** - Input/output slot indices are valid
+
+```
+[graph] Node 12 (SaveImage): Type mismatch: KSampler outputs LATENT, but SaveImage expects IMAGE
+```
+
+### Level 3: Node Introspection
+
+Validates node definitions from the ComfyUI API:
+
+- **INPUT_TYPES** - Returns valid dict with required/optional structure
+- **RETURN_TYPES** - Is a list matching RETURN_NAMES length
+- **FUNCTION** - Method name is defined
+
+```
+[introspection] Node 3 (BrokenNode): Node has no FUNCTION defined
+```
+
+### Level 4: Partial Execution
+
+Executes the "prefix" of your workflow - nodes that don't require CUDA:
+
+- Identifies nodes that don't depend on CUDA packages
+- Converts workflow to ComfyUI prompt format
+- Submits partial workflow to the API
+- Reports which nodes executed successfully
+
+This catches runtime errors in non-GPU code paths (file loading, preprocessing, etc.) even on CPU-only CI.
+
+```
+[Step 3c/4] Partial execution (3 non-CUDA nodes)...
+  Executed 3 nodes successfully
+```
+
+### Detecting CUDA Nodes
+
+To mark nodes as requiring CUDA (so they're excluded from partial execution), list them in your `comfy-test.toml`:
+
+```toml
+[test.validation]
+cuda_node_types = ["KSampler", "VAEDecode", "MyGPUNode"]
+```
+
+Or use `comfy-env.toml` to specify CUDA packages - any node importing those packages will be detected automatically.
 
 ## Configuration Reference
 
