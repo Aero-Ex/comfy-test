@@ -120,6 +120,9 @@ class WorkflowValidator:
 
         return errors
 
+    # Widget types that are uppercase but NOT connection types
+    WIDGET_TYPES = {"BOOLEAN", "INT", "FLOAT", "STRING"}
+
     def _validate_widgets(
         self,
         node: Dict[str, Any],
@@ -145,8 +148,8 @@ class WorkflowValidator:
             input_type = input_spec[0]
 
             # Skip connection types (uppercase like IMAGE, MASK, etc.)
-            # These are not widgets, they're connections
-            if isinstance(input_type, str) and input_type.isupper():
+            # But keep widget types (BOOLEAN, INT, FLOAT, STRING) which are also uppercase
+            if isinstance(input_type, str) and input_type.isupper() and input_type not in self.WIDGET_TYPES:
                 continue
 
             # This is a widget - get its value
@@ -286,7 +289,7 @@ class WorkflowValidator:
         from_type = from_node.get("type", "unknown")
         to_type = to_node.get("type", "unknown")
 
-        # Get output type from source node
+        # Get output type from source node schema
         from_schema = self.object_info.get(from_type, {})
         from_outputs = from_schema.get("output", [])
 
@@ -295,32 +298,22 @@ class WorkflowValidator:
 
         output_type = from_outputs[from_slot]
 
-        # Get input type from target node
-        to_schema = self.object_info.get(to_type, {})
-        to_inputs = to_schema.get("input", {})
-        required = to_inputs.get("required", {})
-        optional = to_inputs.get("optional", {})
-        all_inputs = {**required, **optional}
+        # Get input type from target node's inputs array in the workflow
+        # This is more reliable than inferring from schema because:
+        # 1. The workflow explicitly stores connection slot types
+        # 2. Some inputs (like STRING) can be both widgets AND connections
+        to_inputs = to_node.get("inputs", [])
 
-        # Find the input at the given slot
-        input_idx = 0
-        target_input_type = None
-        for input_name, input_spec in all_inputs.items():
-            if not isinstance(input_spec, (list, tuple)) or len(input_spec) < 1:
-                continue
-            spec_type = input_spec[0]
-            # Only count connection inputs (uppercase types)
-            if isinstance(spec_type, str) and spec_type.isupper():
-                if input_idx == to_slot:
-                    target_input_type = spec_type
-                    break
-                input_idx += 1
-
-        if target_input_type is None:
+        if to_slot >= len(to_inputs):
             return f"Input slot {to_slot} does not exist on {to_type}"
 
+        target_input = to_inputs[to_slot]
+        target_input_type = target_input.get("type", "unknown")
+
         # Check type compatibility
-        # ComfyUI allows some type coercion, but we'll be strict for now
+        # ComfyUI allows some type coercion:
+        # - "*" (any type) matches everything
+        # - Exact type match
         if output_type != target_input_type and output_type != "*" and target_input_type != "*":
             return f"Type mismatch: {from_type} outputs {output_type}, but {to_type} expects {target_input_type}"
 
@@ -597,8 +590,8 @@ class WorkflowValidator:
 
                 input_type = input_spec[0]
 
-                # Check if this is a connection type (uppercase)
-                if isinstance(input_type, str) and input_type.isupper():
+                # Check if this is a connection type (uppercase, but not widget types)
+                if isinstance(input_type, str) and input_type.isupper() and input_type not in self.WIDGET_TYPES:
                     # Find the link for this input
                     for inp in node_input_links:
                         if inp.get("name") == input_name:

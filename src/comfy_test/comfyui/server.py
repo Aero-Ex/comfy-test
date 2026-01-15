@@ -100,10 +100,25 @@ class ComfyUIServer:
         if not self._process:
             return
         try:
-            for line in self._process.stdout:
-                if self._stop_output_thread:
+            # Read both stdout and stderr
+            import selectors
+            sel = selectors.DefaultSelector()
+            sel.register(self._process.stdout, selectors.EVENT_READ)
+            sel.register(self._process.stderr, selectors.EVENT_READ)
+
+            while not self._stop_output_thread:
+                for key, _ in sel.select(timeout=0.1):
+                    line = key.fileobj.readline()
+                    if line:
+                        self._log(f"  [ComfyUI] {line.rstrip()}")
+                # Check if process ended
+                if self._process.poll() is not None:
+                    # Read remaining output
+                    for line in self._process.stdout:
+                        self._log(f"  [ComfyUI] {line.rstrip()}")
+                    for line in self._process.stderr:
+                        self._log(f"  [ComfyUI] {line.rstrip()}")
                     break
-                self._log(f"  [ComfyUI] {line.rstrip()}")
         except Exception:
             pass  # Process may have ended
 
@@ -137,6 +152,9 @@ class ComfyUIServer:
 
             try:
                 if api.health_check():
+                    # Wait for nodes to fully load (health check passes before nodes load)
+                    self._log("Server responding, waiting for nodes to load...")
+                    time.sleep(20)
                     self._log("Server is ready!")
                     self._api = api
                     return

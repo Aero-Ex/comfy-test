@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional, Callable, List
 
 from .config import TestConfig
-from .comfy_env import get_cuda_packages
+from .comfy_env import get_cuda_packages, get_node_reqs
 from .platform import get_platform, TestPlatform, TestPaths
 from ..comfyui.server import ComfyUIServer
 from ..comfyui.validator import WorkflowValidator
@@ -133,6 +133,14 @@ class TestManager:
                 self._log("\n[Step 2/4] Installing custom node...")
                 platform.install_node(paths, self.node_dir)
 
+                # Install node dependencies from comfy-env.toml [node_reqs]
+                node_reqs = get_node_reqs(self.node_dir)
+                if node_reqs:
+                    self._log(f"\n[Step 2b/4] Installing {len(node_reqs)} node dependency(ies)...")
+                    for name, repo in node_reqs:
+                        self._log(f"  {name} from {repo}")
+                        platform.install_node_from_repo(paths, repo, name)
+
                 # Get CUDA packages to mock from comfy-env.toml
                 cuda_packages = get_cuda_packages(self.node_dir)
                 if cuda_packages:
@@ -152,43 +160,52 @@ class TestManager:
                         api.verify_nodes(self.config.expected_nodes)
                         self._log(f"All {len(self.config.expected_nodes)} expected nodes found!")
 
-                    # Validate workflow if configured
-                    if self.config.workflow.file:
-                        self._log("\n[Step 3b/4] Validating workflow...")
-                        workflow_path = self._resolve_workflow_path(self.config.workflow.file)
+                    # Auto-discover and validate all workflows in workflows/ directory
+                    workflows_dir = self.node_dir / "workflows"
+                    workflow_files = list(workflows_dir.glob("*.json")) if workflows_dir.exists() else []
+
+                    if workflow_files:
+                        self._log(f"\n[Step 3b/4] Validating {len(workflow_files)} workflow(s)...")
                         object_info = api.get_object_info()
                         validator = WorkflowValidator(
                             object_info,
                             cuda_packages=cuda_packages,
                             cuda_node_types=set(),  # TODO: detect from comfy-env.toml
                         )
-                        validation_result = validator.validate_file(workflow_path)
 
-                        if not validation_result.is_valid:
-                            for err in validation_result.errors:
-                                self._log(f"  [ERROR] {err}")
+                        all_errors = []
+                        for workflow_path in workflow_files:
+                            self._log(f"  Validating {workflow_path.name}...")
+                            validation_result = validator.validate_file(workflow_path)
+
+                            if not validation_result.is_valid:
+                                for err in validation_result.errors:
+                                    self._log(f"    [ERROR] {err}")
+                                    all_errors.append((workflow_path.name, err))
+                            else:
+                                self._log(f"    Level 1-3: OK")
+
+                            # Level 4: Try partial execution of non-CUDA prefix
+                            if validation_result.executable_nodes:
+                                import json
+                                with open(workflow_path) as f:
+                                    workflow = json.load(f)
+                                exec_result = validator.execute_prefix(workflow, api, timeout=30)
+
+                                if exec_result.executed_nodes:
+                                    self._log(f"    Level 4: {len(exec_result.executed_nodes)} nodes executed")
+                                if exec_result.execution_errors:
+                                    for node_id, error in exec_result.execution_errors.items():
+                                        self._log(f"    [WARN] Node {node_id}: {error}")
+                            else:
+                                self._log(f"    Level 4: No non-CUDA nodes to execute")
+
+                        if all_errors:
                             raise WorkflowValidationError(
-                                f"Workflow has {len(validation_result.errors)} validation error(s)",
-                                validation_result.errors
+                                f"Workflow validation failed ({len(all_errors)} error(s))",
+                                [err for _, err in all_errors]
                             )
-                        self._log(f"Workflow validation passed (Level 1-3)!")
-
-                        # Level 4: Try partial execution of non-CUDA prefix
-                        if validation_result.executable_nodes:
-                            self._log(f"\n[Step 3c/4] Partial execution ({len(validation_result.executable_nodes)} non-CUDA nodes)...")
-                            import json
-                            with open(workflow_path) as f:
-                                workflow = json.load(f)
-                            exec_result = validator.execute_prefix(workflow, api, timeout=30)
-
-                            if exec_result.executed_nodes:
-                                self._log(f"  Executed {len(exec_result.executed_nodes)} nodes successfully")
-                            if exec_result.execution_errors:
-                                for node_id, error in exec_result.execution_errors.items():
-                                    self._log(f"  [WARN] Node {node_id} failed: {error}")
-                            if exec_result.warnings:
-                                for warn in exec_result.warnings:
-                                    self._log(f"  [WARN] {warn}")
+                        self._log(f"All {len(workflow_files)} workflow(s) validated!")
 
                     # Run workflow if configured and not skipped
                     if self.config.workflow.file and not platform_config.skip_workflow:

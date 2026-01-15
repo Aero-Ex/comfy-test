@@ -153,6 +153,22 @@ class TestPlatform(ABC):
         """
         pass
 
+    @abstractmethod
+    def install_node_from_repo(self, paths: TestPaths, repo: str, name: str) -> None:
+        """
+        Install a custom node from a GitHub repository.
+
+        1. Git clone into custom_nodes/
+        2. Install requirements.txt if present
+        3. Run install.py if present
+
+        Args:
+            paths: TestPaths from setup_comfyui
+            repo: GitHub repo path, e.g., 'PozzettiAndrea/ComfyUI-GeometryPack'
+            name: Name for the node directory
+        """
+        pass
+
     def _run_command(
         self,
         cmd: list[str],

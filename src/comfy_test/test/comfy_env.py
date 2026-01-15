@@ -2,12 +2,47 @@
 
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
+
+
+def get_node_reqs(node_dir: Path) -> List[Tuple[str, str]]:
+    """
+    Read comfy-env.toml and return list of node dependencies.
+
+    Args:
+        node_dir: Path to the custom node directory
+
+    Returns:
+        List of (name, repo) tuples, e.g., [('GeometryPack', 'PozzettiAndrea/ComfyUI-GeometryPack')]
+    """
+    config_path = Path(node_dir) / "comfy-env.toml"
+    if not config_path.exists():
+        return []
+
+    try:
+        config = tomllib.loads(config_path.read_text())
+    except Exception:
+        return []
+
+    node_reqs = config.get("node_reqs", {})
+    result = []
+
+    for name, value in node_reqs.items():
+        if isinstance(value, str):
+            repo = value
+        elif isinstance(value, dict):
+            repo = value.get("repo", "")
+        else:
+            continue
+        if repo:
+            result.append((name, repo))
+
+    return result
 
 
 def get_cuda_packages(node_dir: Path) -> List[str]:
