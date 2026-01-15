@@ -49,7 +49,7 @@ Add this workflow to your repository:
           config-file: "comfy-test.toml"
 """
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 from .test.config import TestConfig, WorkflowConfig, PlatformTestConfig
 from .test.config_file import load_config, discover_config, CONFIG_FILE_NAMES

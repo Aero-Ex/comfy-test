@@ -120,22 +120,22 @@ class LinuxTestPlatform(TestPlatform):
 
         target_dir.symlink_to(node_dir)
 
-        # Run install.py if present
-        install_py = node_dir / "install.py"
-        if install_py.exists():
-            self._log("Running install.py...")
-            self._run_command(
-                [str(paths.python), str(install_py)],
-                cwd=node_dir,
-            )
-
-        # Install requirements.txt if present
+        # Install requirements.txt first (install.py may depend on these)
         requirements_file = node_dir / "requirements.txt"
         if requirements_file.exists():
             self._log("Installing node requirements...")
             self._run_command(
                 ["uv", "pip", "install", "--python", str(paths.python),
                  "-r", str(requirements_file)],
+                cwd=node_dir,
+            )
+
+        # Run install.py if present
+        install_py = node_dir / "install.py"
+        if install_py.exists():
+            self._log("Running install.py...")
+            self._run_command(
+                [str(paths.python), str(install_py)],
                 cwd=node_dir,
             )
 

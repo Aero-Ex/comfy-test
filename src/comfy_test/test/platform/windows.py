@@ -119,22 +119,22 @@ class WindowsTestPlatform(TestPlatform):
 
         shutil.copytree(node_dir, target_dir)
 
-        # Run install.py if present
-        install_py = target_dir / "install.py"
-        if install_py.exists():
-            self._log("Running install.py...")
-            self._run_command(
-                [str(paths.python), str(install_py)],
-                cwd=target_dir,
-            )
-
-        # Install requirements.txt if present
+        # Install requirements.txt first (install.py may depend on these)
         requirements_file = target_dir / "requirements.txt"
         if requirements_file.exists():
             self._log("Installing node requirements...")
             self._run_command(
                 ["uv", "pip", "install", "--python", str(paths.python),
                  "-r", str(requirements_file)],
+                cwd=target_dir,
+            )
+
+        # Run install.py if present
+        install_py = target_dir / "install.py"
+        if install_py.exists():
+            self._log("Running install.py...")
+            self._run_command(
+                [str(paths.python), str(install_py)],
                 cwd=target_dir,
             )
 
