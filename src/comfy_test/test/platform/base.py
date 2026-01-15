@@ -112,6 +112,7 @@ class TestPlatform(ABC):
         paths: TestPaths,
         config: "TestConfig",
         port: int = 8188,
+        extra_env: Optional[dict] = None,
     ) -> subprocess.Popen:
         """
         Start ComfyUI server.
@@ -120,6 +121,7 @@ class TestPlatform(ABC):
             paths: TestPaths from setup_comfyui
             config: Test configuration
             port: Port to listen on
+            extra_env: Additional environment variables
 
         Returns:
             subprocess.Popen handle for the running server

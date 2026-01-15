@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, Callable, TYPE_CHECKING
+from typing import Optional, Callable, Dict, TYPE_CHECKING
 
 from .base import TestPlatform, TestPaths
 
@@ -147,6 +147,7 @@ class LinuxTestPlatform(TestPlatform):
         paths: TestPaths,
         config: "TestConfig",
         port: int = 8188,
+        extra_env: Optional[dict] = None,
     ) -> subprocess.Popen:
         """Start ComfyUI server on Linux."""
         self._log(f"Starting ComfyUI server on port {port}...")
@@ -166,6 +167,8 @@ class LinuxTestPlatform(TestPlatform):
         if paths.venv_dir:
             env["VIRTUAL_ENV"] = str(paths.venv_dir)
             env["PATH"] = f"{paths.venv_dir}/bin:{env.get('PATH', '')}"
+        if extra_env:
+            env.update(extra_env)
 
         process = subprocess.Popen(
             cmd,

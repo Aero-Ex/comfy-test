@@ -146,6 +146,7 @@ class WindowsTestPlatform(TestPlatform):
         paths: TestPaths,
         config: "TestConfig",
         port: int = 8188,
+        extra_env: Optional[dict] = None,
     ) -> subprocess.Popen:
         """Start ComfyUI server on Windows."""
         self._log(f"Starting ComfyUI server on port {port}...")
@@ -165,6 +166,8 @@ class WindowsTestPlatform(TestPlatform):
         if paths.venv_dir:
             env["VIRTUAL_ENV"] = str(paths.venv_dir)
             env["PATH"] = f"{paths.venv_dir}\\Scripts;{env.get('PATH', '')}"
+        if extra_env:
+            env.update(extra_env)
 
         process = subprocess.Popen(
             cmd,

@@ -146,6 +146,7 @@ class WindowsPortableTestPlatform(TestPlatform):
         paths: TestPaths,
         config: "TestConfig",
         port: int = 8188,
+        extra_env: Optional[dict] = None,
     ) -> subprocess.Popen:
         """Start ComfyUI server using portable Python."""
         self._log(f"Starting ComfyUI server on port {port}...")
@@ -162,9 +163,15 @@ class WindowsPortableTestPlatform(TestPlatform):
         if config.cpu_only:
             cmd.append("--cpu")
 
+        # Set environment
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
+
         process = subprocess.Popen(
             cmd,
             cwd=paths.comfyui_dir,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

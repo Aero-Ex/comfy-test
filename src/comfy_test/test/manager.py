@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Optional, Callable, List
 
 from .config import TestConfig
+from .comfy_env import get_cuda_packages
 from .platform import get_platform, TestPlatform, TestPaths
 from ..comfyui.server import ComfyUIServer
 from ..comfyui.workflow import WorkflowRunner
@@ -131,9 +132,18 @@ class TestManager:
                 self._log("\n[Step 2/4] Installing custom node...")
                 platform.install_node(paths, self.node_dir)
 
+                # Get CUDA packages to mock from comfy-env.toml
+                cuda_packages = get_cuda_packages(self.node_dir)
+                if cuda_packages:
+                    self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
+
                 # Start server and verify
                 self._log("\n[Step 3/4] Verifying node registration...")
-                with ComfyUIServer(platform, paths, self.config, log_callback=self._log) as server:
+                with ComfyUIServer(
+                    platform, paths, self.config,
+                    cuda_mock_packages=cuda_packages,
+                    log_callback=self._log,
+                ) as server:
                     api = server.get_api()
 
                     # Verify expected nodes

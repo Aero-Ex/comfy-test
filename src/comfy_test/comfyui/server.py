@@ -3,7 +3,7 @@
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional, Callable, TYPE_CHECKING
+from typing import Optional, Callable, List, TYPE_CHECKING
 
 from .api import ComfyUIAPI
 from ..errors import ServerError, TimeoutError
@@ -23,6 +23,7 @@ class ComfyUIServer:
         paths: Test paths from platform setup
         config: Test configuration
         port: Port to listen on
+        cuda_mock_packages: List of CUDA packages to mock for import testing
         log_callback: Optional callback for logging
 
     Example:
@@ -37,12 +38,14 @@ class ComfyUIServer:
         paths: "TestPaths",
         config: "TestConfig",
         port: int = 8188,
+        cuda_mock_packages: Optional[List[str]] = None,
         log_callback: Optional[Callable[[str], None]] = None,
     ):
         self.platform = platform
         self.paths = paths
         self.config = config
         self.port = port
+        self.cuda_mock_packages = cuda_mock_packages or []
         self._log = log_callback or (lambda msg: print(msg))
         self._process: Optional[subprocess.Popen] = None
         self._api: Optional[ComfyUIAPI] = None
@@ -66,10 +69,19 @@ class ComfyUIServer:
             raise ServerError("Server already started")
 
         self._log(f"Starting ComfyUI server on port {self.port}...")
+
+        # Prepare extra env vars for CUDA mock injection
+        extra_env = {}
+        if self.cuda_mock_packages:
+            extra_env["COMFY_TEST_MOCK_PACKAGES"] = ",".join(self.cuda_mock_packages)
+            extra_env["COMFY_TEST_STRICT_IMPORTS"] = "1"
+            self._log(f"CUDA mock packages: {', '.join(self.cuda_mock_packages)}")
+
         self._process = self.platform.start_server(
             self.paths,
             self.config,
             self.port,
+            extra_env=extra_env,
         )
 
         # Wait for server to be ready
