@@ -190,3 +190,47 @@ class WindowsTestPlatform(TestPlatform):
                 shutil.rmtree(paths.work_dir)
             except PermissionError:
                 self._log("Warning: Could not fully clean up (files may be locked)")
+
+    def install_node_from_repo(self, paths: TestPaths, repo: str, name: str) -> None:
+        """
+        Install a custom node from a GitHub repository.
+
+        1. Git clone into custom_nodes/
+        2. Install requirements.txt if present
+        3. Run install.py if present
+        """
+        target_dir = paths.custom_nodes_dir / name
+        git_url = f"https://github.com/{repo}.git"
+
+        # Skip if already installed
+        if target_dir.exists():
+            self._log(f"  {name} already exists, skipping...")
+            return
+
+        # Clone the repo
+        self._log(f"  Cloning {repo}...")
+        self._run_command(
+            ["git", "clone", "--depth", "1", git_url, str(target_dir)],
+            cwd=paths.custom_nodes_dir,
+        )
+
+        # Install requirements.txt first
+        requirements_file = target_dir / "requirements.txt"
+        if requirements_file.exists():
+            self._log(f"  Installing {name} requirements...")
+            self._run_command(
+                ["uv", "pip", "install", "--python", str(paths.python),
+                 "-r", str(requirements_file)],
+                cwd=target_dir,
+            )
+
+        # Run install.py if present
+        install_py = target_dir / "install.py"
+        if install_py.exists():
+            self._log(f"  Running {name} install.py...")
+            install_env = {"COMFY_ENV_CUDA_VERSION": "12.8"}
+            self._run_command(
+                [str(paths.python), str(install_py)],
+                cwd=target_dir,
+                env=install_env,
+            )

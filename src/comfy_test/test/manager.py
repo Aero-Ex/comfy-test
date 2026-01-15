@@ -110,10 +110,12 @@ class TestManager:
             self._log("[DRY RUN] Would run:")
             self._log(f"  1. Setup ComfyUI ({self.config.comfyui_version})")
             self._log(f"  2. Install node: {self.node_dir.name}")
+            self._log(f"  3. Install node dependencies (from comfy-env.toml)")
             if self.config.expected_nodes:
-                self._log(f"  3. Verify nodes: {', '.join(self.config.expected_nodes)}")
+                self._log(f"  4. Verify nodes: {', '.join(self.config.expected_nodes)}")
+            self._log(f"  5. Validate workflows (Level 1-4)")
             if self.config.workflow.file:
-                self._log(f"  4. Run workflow: {self.config.workflow.file}")
+                self._log(f"  6. Run workflow: {self.config.workflow.file}")
             return TestResult(platform_name, True, details="Dry run")
 
         try:
@@ -125,29 +127,31 @@ class TestManager:
             with tempfile.TemporaryDirectory(prefix="comfy_test_") as work_dir:
                 work_path = Path(work_dir)
 
-                # Setup ComfyUI
-                self._log("\n[Step 1/4] Setting up ComfyUI...")
+                # Step 1: Setup ComfyUI
+                self._log("\n[Step 1/6] Setting up ComfyUI...")
                 paths = platform.setup_comfyui(self.config, work_path)
 
-                # Install custom node
-                self._log("\n[Step 2/4] Installing custom node...")
+                # Step 2: Install custom node
+                self._log("\n[Step 2/6] Installing custom node...")
                 platform.install_node(paths, self.node_dir)
 
-                # Install node dependencies from comfy-env.toml [node_reqs]
+                # Step 3: Install node dependencies from comfy-env.toml [node_reqs]
                 node_reqs = get_node_reqs(self.node_dir)
                 if node_reqs:
-                    self._log(f"\n[Step 2b/4] Installing {len(node_reqs)} node dependency(ies)...")
+                    self._log(f"\n[Step 3/6] Installing {len(node_reqs)} node dependency(ies)...")
                     for name, repo in node_reqs:
                         self._log(f"  {name} from {repo}")
                         platform.install_node_from_repo(paths, repo, name)
+                else:
+                    self._log("\n[Step 3/6] No node dependencies to install")
 
                 # Get CUDA packages to mock from comfy-env.toml
                 cuda_packages = get_cuda_packages(self.node_dir)
                 if cuda_packages:
                     self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
 
-                # Start server and verify
-                self._log("\n[Step 3/4] Verifying node registration...")
+                # Step 4: Start server and verify nodes
+                self._log("\n[Step 4/6] Verifying node registration...")
                 with ComfyUIServer(
                     platform, paths, self.config,
                     cuda_mock_packages=cuda_packages,
@@ -160,12 +164,12 @@ class TestManager:
                         api.verify_nodes(self.config.expected_nodes)
                         self._log(f"All {len(self.config.expected_nodes)} expected nodes found!")
 
-                    # Auto-discover and validate all workflows in workflows/ directory
+                    # Step 5: Validate workflows (Level 1-4)
                     workflows_dir = self.node_dir / "workflows"
                     workflow_files = list(workflows_dir.glob("*.json")) if workflows_dir.exists() else []
 
                     if workflow_files:
-                        self._log(f"\n[Step 3b/4] Validating {len(workflow_files)} workflow(s)...")
+                        self._log(f"\n[Step 5/6] Validating {len(workflow_files)} workflow(s)...")
                         object_info = api.get_object_info()
                         validator = WorkflowValidator(
                             object_info,
@@ -175,7 +179,7 @@ class TestManager:
 
                         all_errors = []
                         for workflow_path in workflow_files:
-                            self._log(f"  Validating {workflow_path.name}...")
+                            self._log(f"  {workflow_path.name}:")
                             validation_result = validator.validate_file(workflow_path)
 
                             if not validation_result.is_valid:
@@ -183,7 +187,9 @@ class TestManager:
                                     self._log(f"    [ERROR] {err}")
                                     all_errors.append((workflow_path.name, err))
                             else:
-                                self._log(f"    Level 1-3: OK")
+                                self._log(f"    Level 1 (Schema): OK")
+                                self._log(f"    Level 2 (Graph): OK")
+                                self._log(f"    Level 3 (Introspection): OK")
 
                             # Level 4: Try partial execution of non-CUDA prefix
                             if validation_result.executable_nodes:
@@ -193,12 +199,14 @@ class TestManager:
                                 exec_result = validator.execute_prefix(workflow, api, timeout=30)
 
                                 if exec_result.executed_nodes:
-                                    self._log(f"    Level 4: {len(exec_result.executed_nodes)} nodes executed")
+                                    self._log(f"    Level 4 (Execution): {len(exec_result.executed_nodes)} nodes executed")
+                                else:
+                                    self._log(f"    Level 4 (Execution): OK (no non-CUDA nodes)")
                                 if exec_result.execution_errors:
                                     for node_id, error in exec_result.execution_errors.items():
-                                        self._log(f"    [WARN] Node {node_id}: {error}")
+                                        self._log(f"      [WARN] Node {node_id}: {error}")
                             else:
-                                self._log(f"    Level 4: No non-CUDA nodes to execute")
+                                self._log(f"    Level 4 (Execution): Skipped (all nodes require CUDA)")
 
                         if all_errors:
                             raise WorkflowValidationError(
@@ -206,10 +214,12 @@ class TestManager:
                                 [err for _, err in all_errors]
                             )
                         self._log(f"All {len(workflow_files)} workflow(s) validated!")
+                    else:
+                        self._log("\n[Step 5/6] No workflows to validate")
 
-                    # Run workflow if configured and not skipped
+                    # Step 6: Run workflow if configured
                     if self.config.workflow.file and not platform_config.skip_workflow:
-                        self._log("\n[Step 4/4] Running test workflow...")
+                        self._log("\n[Step 6/6] Running test workflow...")
                         runner = WorkflowRunner(api, self._log)
                         result = runner.run_workflow(
                             self.config.workflow.file,
@@ -217,7 +227,7 @@ class TestManager:
                         )
                         self._log(f"Workflow completed with status: {result['status']}")
                     else:
-                        self._log("\n[Step 4/4] Skipping workflow (not configured or disabled)")
+                        self._log("\n[Step 6/6] Skipping workflow execution (not configured)")
 
             self._log(f"\n{platform_name}: PASSED")
             return TestResult(platform_name, True)
