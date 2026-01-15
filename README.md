@@ -75,6 +75,31 @@ timeout = 120                        # Workflow timeout
 comfyui_portable_version = "latest"  # Portable version to download
 ```
 
+## CUDA Packages on CPU-only CI
+
+comfy-test runs on CPU-only GitHub Actions runners. For nodes that use CUDA packages (nvdiffrast, flash-attn, etc.):
+
+1. **Installation works** - comfy-test sets `COMFY_ENV_CUDA_VERSION=12.8` so comfy-env can resolve wheel URLs even without a GPU
+2. **Import may fail** - CUDA packages typically fail to import without a GPU
+
+**Best practice for CUDA nodes:**
+- Use lazy imports in production (better UX, graceful errors)
+- Consider strict imports mode for testing to catch missing deps
+
+```python
+# In your node's __init__.py
+import os
+
+if os.environ.get('COMFY_TEST_STRICT_IMPORTS'):
+    # Test mode: import everything now to catch missing deps
+    import nvdiffrast  # Will fail on CPU, but that's expected
+else:
+    # Production: lazy import when needed
+    nvdiffrast = None
+```
+
+For full CUDA testing, use a self-hosted runner with a GPU.
+
 ## CLI
 
 ```bash

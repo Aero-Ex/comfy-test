@@ -133,9 +133,12 @@ class WindowsTestPlatform(TestPlatform):
         install_py = target_dir / "install.py"
         if install_py.exists():
             self._log("Running install.py...")
+            # Set CUDA version for CPU-only CI (comfy-env will use this if no GPU detected)
+            install_env = {"COMFY_ENV_CUDA_VERSION": "12.8"}
             self._run_command(
                 [str(paths.python), str(install_py)],
                 cwd=target_dir,
+                env=install_env,
             )
 
     def start_server(
