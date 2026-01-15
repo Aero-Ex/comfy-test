@@ -242,9 +242,23 @@ class WindowsPortableTestPlatform(TestPlatform):
             ) from e
 
     def _extract_7z(self, archive: Path, dest: Path) -> None:
-        """Extract 7z archive using py7zr."""
+        """Extract 7z archive using 7z CLI or py7zr."""
         self._log(f"Extracting {archive.name}...")
 
+        # Try 7z command first (handles BCJ2 filter that py7zr doesn't support)
+        if shutil.which("7z"):
+            dest.mkdir(parents=True, exist_ok=True)
+            result = subprocess.run(
+                ["7z", "x", str(archive), f"-o{dest}", "-y"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                self._log(f"Extracted to {dest}")
+                return
+            # Fall through to py7zr if 7z fails
+
+        # Fallback to py7zr
         try:
             import py7zr
             with py7zr.SevenZipFile(archive, mode="r") as z:
@@ -252,8 +266,8 @@ class WindowsPortableTestPlatform(TestPlatform):
             self._log(f"Extracted to {dest}")
         except ImportError:
             raise SetupError(
-                "py7zr is required for extracting portable archives",
-                "Install it with: pip install py7zr"
+                "7z command not found and py7zr not installed",
+                "Install 7-Zip or run: pip install py7zr"
             )
         except Exception as e:
             raise SetupError(
