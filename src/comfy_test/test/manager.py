@@ -1,11 +1,13 @@
 """Test manager for orchestrating installation tests."""
 
+import json
 import tempfile
 from pathlib import Path
 from typing import Optional, Callable, List
 
-from .config import TestConfig
+from .config import TestConfig, TestLevel
 from .comfy_env import get_cuda_packages, get_node_reqs
+from .node_discovery import discover_nodes
 from .platform import get_platform, TestPlatform, TestPaths
 from ..comfyui.server import ComfyUIServer
 from ..comfyui.validator import WorkflowValidator
@@ -65,11 +67,16 @@ class TestManager:
         self.node_dir = Path(node_dir) if node_dir else Path.cwd()
         self._log = log_callback or (lambda msg: print(msg))
 
-    def run_all(self, dry_run: bool = False) -> List[TestResult]:
+    def run_all(
+        self,
+        dry_run: bool = False,
+        level: Optional[TestLevel] = None,
+    ) -> List[TestResult]:
         """Run tests on all enabled platforms.
 
         Args:
             dry_run: If True, only show what would be done
+            level: Maximum test level to run (None = all levels + workflows)
 
         Returns:
             List of TestResult for each platform
@@ -87,36 +94,35 @@ class TestManager:
                 self._log(f"Skipping {platform_name} (disabled)")
                 continue
 
-            result = self.run_platform(platform_name, dry_run)
+            result = self.run_platform(platform_name, dry_run, level)
             results.append(result)
 
         return results
 
-    def run_platform(self, platform_name: str, dry_run: bool = False) -> TestResult:
+    def run_platform(
+        self,
+        platform_name: str,
+        dry_run: bool = False,
+        level: Optional[TestLevel] = None,
+    ) -> TestResult:
         """Run tests on a specific platform.
 
         Args:
             platform_name: Platform to test ('linux', 'windows', 'windows_portable')
             dry_run: If True, only show what would be done
+            level: Maximum test level to run (None = all levels + workflows)
 
         Returns:
             TestResult for the platform
         """
         self._log(f"\n{'='*60}")
         self._log(f"Testing on {platform_name}")
+        if level:
+            self._log(f"Test level: {level.value}")
         self._log(f"{'='*60}")
 
         if dry_run:
-            self._log("[DRY RUN] Would run:")
-            self._log(f"  1. Setup ComfyUI ({self.config.comfyui_version})")
-            self._log(f"  2. Install node: {self.node_dir.name}")
-            self._log(f"  3. Install node dependencies (from comfy-env.toml)")
-            if self.config.expected_nodes:
-                self._log(f"  4. Verify nodes: {', '.join(self.config.expected_nodes)}")
-            self._log(f"  5. Validate workflows (Level 1-4)")
-            if self.config.workflow.file:
-                self._log(f"  6. Run workflow: {self.config.workflow.file}")
-            return TestResult(platform_name, True, details="Dry run")
+            return self._dry_run(platform_name, level)
 
         try:
             # Get platform provider
@@ -127,6 +133,7 @@ class TestManager:
             with tempfile.TemporaryDirectory(prefix="comfy_test_") as work_dir:
                 work_path = Path(work_dir)
 
+                # === INSTALL LEVEL ===
                 # Step 1: Setup ComfyUI
                 self._log("\n[Step 1/6] Setting up ComfyUI...")
                 paths = platform.setup_comfyui(self.config, work_path)
@@ -145,12 +152,20 @@ class TestManager:
                 else:
                     self._log("\n[Step 3/6] No node dependencies to install")
 
+                if level == TestLevel.INSTALL:
+                    self._log(f"\n{platform_name}: PASSED (install level)")
+                    return TestResult(platform_name, True, details="Stopped at install level")
+
                 # Get CUDA packages to mock from comfy-env.toml
                 cuda_packages = get_cuda_packages(self.node_dir)
                 if cuda_packages:
                     self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
 
-                # Step 4: Start server and verify nodes
+                # Discover nodes from NODE_CLASS_MAPPINGS before starting server
+                expected_nodes = discover_nodes(self.node_dir)
+                self._log(f"Discovered {len(expected_nodes)} node(s): {', '.join(expected_nodes)}")
+
+                # === REGISTRATION LEVEL and beyond require server ===
                 self._log("\n[Step 4/6] Verifying node registration...")
                 with ComfyUIServer(
                     platform, paths, self.config,
@@ -159,14 +174,27 @@ class TestManager:
                 ) as server:
                     api = server.get_api()
 
-                    # Verify expected nodes
-                    if self.config.expected_nodes:
-                        api.verify_nodes(self.config.expected_nodes)
-                        self._log(f"All {len(self.config.expected_nodes)} expected nodes found!")
+                    # Verify discovered nodes are registered
+                    api.verify_nodes(expected_nodes)
+                    self._log(f"All {len(expected_nodes)} expected nodes found!")
 
-                    # Step 5: Validate workflows (Level 1-4)
-                    workflows_dir = self.node_dir / "workflows"
-                    workflow_files = list(workflows_dir.glob("*.json")) if workflows_dir.exists() else []
+                    if level == TestLevel.REGISTRATION:
+                        self._log(f"\n{platform_name}: PASSED (registration level)")
+                        return TestResult(platform_name, True, details="Stopped at registration level")
+
+                    # === INSTANTIATION LEVEL ===
+                    if level is None or TestLevel.includes(level, TestLevel.INSTANTIATION):
+                        self._log("\n[Step 4b/6] Testing node instantiation...")
+                        self._test_instantiation(platform, paths, expected_nodes, cuda_packages)
+                        self._log(f"All {len(expected_nodes)} node(s) instantiated successfully!")
+
+                        if level == TestLevel.INSTANTIATION:
+                            self._log(f"\n{platform_name}: PASSED (instantiation level)")
+                            return TestResult(platform_name, True, details="Stopped at instantiation level")
+
+                    # === VALIDATION LEVEL ===
+                    # Get workflow files - from config or auto-discover from workflows/ dir
+                    workflow_files = self._get_workflow_files()
 
                     if workflow_files:
                         self._log(f"\n[Step 5/6] Validating {len(workflow_files)} workflow(s)...")
@@ -174,7 +202,7 @@ class TestManager:
                         validator = WorkflowValidator(
                             object_info,
                             cuda_packages=cuda_packages,
-                            cuda_node_types=set(),  # TODO: detect from comfy-env.toml
+                            cuda_node_types=set(),
                         )
 
                         all_errors = []
@@ -193,7 +221,6 @@ class TestManager:
 
                             # Level 4: Try partial execution of non-CUDA prefix
                             if validation_result.executable_nodes:
-                                import json
                                 with open(workflow_path) as f:
                                     workflow = json.load(f)
                                 exec_result = validator.execute_prefix(workflow, api, timeout=30)
@@ -217,15 +244,21 @@ class TestManager:
                     else:
                         self._log("\n[Step 5/6] No workflows to validate")
 
-                    # Step 6: Run workflow if configured
-                    if self.config.workflow.file and not platform_config.skip_workflow:
-                        self._log("\n[Step 6/6] Running test workflow...")
+                    if level == TestLevel.VALIDATION:
+                        self._log(f"\n{platform_name}: PASSED (validation level)")
+                        return TestResult(platform_name, True, details="Stopped at validation level")
+
+                    # === WORKFLOW EXECUTION (no level = run everything) ===
+                    if self.config.workflow.files and not platform_config.skip_workflow:
+                        self._log(f"\n[Step 6/6] Running {len(self.config.workflow.files)} workflow(s)...")
                         runner = WorkflowRunner(api, self._log)
-                        result = runner.run_workflow(
-                            self.config.workflow.file,
-                            timeout=self.config.workflow.timeout,
-                        )
-                        self._log(f"Workflow completed with status: {result['status']}")
+                        for workflow_file in self.config.workflow.files:
+                            self._log(f"  Running: {workflow_file.name}")
+                            result = runner.run_workflow(
+                                workflow_file,
+                                timeout=self.config.workflow.timeout,
+                            )
+                            self._log(f"    Status: {result['status']}")
                     else:
                         self._log("\n[Step 6/6] Skipping workflow execution (not configured)")
 
@@ -244,6 +277,164 @@ class TestManager:
             self._log(f"Error: {e}")
             return TestResult(platform_name, False, str(e))
 
+    def _dry_run(self, platform_name: str, level: Optional[TestLevel] = None) -> TestResult:
+        """Show what would be done without doing it."""
+        self._log("[DRY RUN] Would run:")
+        self._log(f"  1. Setup ComfyUI ({self.config.comfyui_version})")
+        self._log(f"  2. Install node: {self.node_dir.name}")
+        self._log(f"  3. Install node dependencies (from comfy-env.toml)")
+        if level == TestLevel.INSTALL:
+            self._log("  [STOP at install level]")
+            return TestResult(platform_name, True, details="Dry run (install)")
+
+        self._log(f"  4. Verify nodes (auto-discovered from NODE_CLASS_MAPPINGS)")
+        if level == TestLevel.REGISTRATION:
+            self._log("  [STOP at registration level]")
+            return TestResult(platform_name, True, details="Dry run (registration)")
+
+        self._log(f"  4b. Test node instantiation (call constructors)")
+        if level == TestLevel.INSTANTIATION:
+            self._log("  [STOP at instantiation level]")
+            return TestResult(platform_name, True, details="Dry run (instantiation)")
+
+        self._log(f"  5. Validate workflows (schema + graph + types)")
+        if level == TestLevel.VALIDATION:
+            self._log("  [STOP at validation level]")
+            return TestResult(platform_name, True, details="Dry run (validation)")
+
+        if self.config.workflow.files:
+            for wf in self.config.workflow.files:
+                self._log(f"  6. Run workflow: {wf}")
+        else:
+            self._log(f"  6. Run workflows (none configured)")
+
+        return TestResult(platform_name, True, details="Dry run")
+
+    def _get_workflow_files(self) -> List[Path]:
+        """Get workflow files to validate/run.
+
+        Returns files from config, or auto-discovers from workflows/ directory.
+        """
+        # If config specifies files, use those
+        if self.config.workflow.files:
+            return self.config.workflow.files
+
+        # Otherwise auto-discover from workflows/ directory
+        workflows_dir = self.node_dir / "workflows"
+        if workflows_dir.exists():
+            return list(workflows_dir.glob("*.json"))
+        return []
+
+    def _test_instantiation(
+        self,
+        platform,
+        paths,
+        expected_nodes: List[str],
+        cuda_packages: List[str],
+    ) -> None:
+        """Test that all node constructors can be called without errors.
+
+        This runs a subprocess in the test venv that imports NODE_CLASS_MAPPINGS
+        and calls each node's constructor.
+
+        Args:
+            platform: Platform provider
+            paths: Test paths
+            expected_nodes: List of expected node names
+            cuda_packages: CUDA packages to mock
+
+        Raises:
+            TestError: If any node fails to instantiate
+        """
+        # Build the test script
+        script = '''
+import sys
+import json
+
+# Mock CUDA packages if needed
+cuda_packages = {cuda_packages_json}
+for pkg in cuda_packages:
+    if pkg not in sys.modules:
+        import types
+        sys.modules[pkg] = types.ModuleType(pkg)
+
+# Import ComfyUI's folder_paths to set up paths
+import folder_paths
+
+# Find and import the node module
+import importlib.util
+from pathlib import Path
+
+node_dir = Path("{node_dir}")
+init_file = node_dir / "__init__.py"
+
+if not init_file.exists():
+    print(json.dumps({{"success": False, "error": "No __init__.py found"}}))
+    sys.exit(1)
+
+spec = importlib.util.spec_from_file_location("test_node", init_file)
+module = importlib.util.module_from_spec(spec)
+sys.modules["test_node"] = module
+spec.loader.exec_module(module)
+
+# Get NODE_CLASS_MAPPINGS
+mappings = getattr(module, "NODE_CLASS_MAPPINGS", {{}})
+
+errors = []
+instantiated = []
+
+for name, cls in mappings.items():
+    try:
+        instance = cls()
+        instantiated.append(name)
+    except Exception as e:
+        errors.append({{"node": name, "error": str(e)}})
+
+result = {{
+    "success": len(errors) == 0,
+    "instantiated": instantiated,
+    "errors": errors,
+}}
+print(json.dumps(result))
+'''.format(
+            node_dir=str(paths.custom_nodes / self.node_dir.name),
+            cuda_packages_json=json.dumps(cuda_packages),
+        )
+
+        # Run the script in the test venv
+        import subprocess
+
+        result = subprocess.run(
+            [str(paths.python), "-c", script],
+            cwd=str(paths.comfyui),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode != 0:
+            raise TestError(
+                "Instantiation test failed",
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+
+        try:
+            data = json.loads(result.stdout.strip())
+        except json.JSONDecodeError:
+            raise TestError(
+                "Instantiation test returned invalid JSON",
+                f"stdout: {result.stdout}\nstderr: {result.stderr}"
+            )
+
+        if not data.get("success"):
+            error_details = "\n".join(
+                f"  - {e['node']}: {e['error']}" for e in data.get("errors", [])
+            )
+            raise TestError(
+                f"Node instantiation failed for {len(data.get('errors', []))} node(s)",
+                error_details
+            )
+
     def verify_only(self, platform_name: Optional[str] = None) -> List[TestResult]:
         """Verify node registration without running workflows.
 
@@ -252,6 +443,9 @@ class TestManager:
 
         Returns:
             List of TestResult
+
+        Note:
+            This is equivalent to running with level=TestLevel.REGISTRATION
         """
         if platform_name is None:
             import sys
@@ -262,15 +456,8 @@ class TestManager:
             else:
                 raise TestError(f"Unsupported platform: {sys.platform}")
 
-        # Temporarily disable workflow
-        original_file = self.config.workflow.file
-        self.config.workflow.file = None
-
-        try:
-            result = self.run_platform(platform_name)
-            return [result]
-        finally:
-            self.config.workflow.file = original_file
+        result = self.run_platform(platform_name, level=TestLevel.REGISTRATION)
+        return [result]
 
     def _resolve_workflow_path(self, workflow_file: str) -> Path:
         """Resolve workflow file path relative to node directory.

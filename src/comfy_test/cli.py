@@ -4,9 +4,11 @@ import argparse
 import sys
 from pathlib import Path
 
+from .test.config import TestLevel
 from .test.config_file import discover_config, load_config, CONFIG_FILE_NAMES
 from .test.manager import TestManager
-from .errors import TestError, ConfigError
+from .test.node_discovery import discover_nodes
+from .errors import TestError, ConfigError, SetupError
 
 
 def cmd_run(args) -> int:
@@ -18,14 +20,19 @@ def cmd_run(args) -> int:
         else:
             config = discover_config()
 
+        # Parse level if specified
+        level = None
+        if args.level:
+            level = TestLevel(args.level)
+
         # Create manager
         manager = TestManager(config)
 
         # Run tests
         if args.platform:
-            results = [manager.run_platform(args.platform, args.dry_run)]
+            results = [manager.run_platform(args.platform, args.dry_run, level)]
         else:
-            results = manager.run_all(args.dry_run)
+            results = manager.run_all(args.dry_run, level)
 
         # Report results
         print(f"\n{'='*60}")
@@ -105,20 +112,24 @@ def cmd_info(args) -> int:
         print(f"  Windows: {'enabled' if config.windows.enabled else 'disabled'}")
         print(f"  Windows Portable: {'enabled' if config.windows_portable.enabled else 'disabled'}")
         print()
-        print("Verification:")
-        if config.expected_nodes:
-            print(f"  Expected nodes ({len(config.expected_nodes)}):")
-            for node in config.expected_nodes:
+        print("Nodes (auto-discovered from NODE_CLASS_MAPPINGS):")
+        try:
+            node_dir = Path(args.config).parent if args.config else Path.cwd()
+            nodes = discover_nodes(node_dir)
+            print(f"  Found {len(nodes)} node(s):")
+            for node in nodes:
                 print(f"    - {node}")
-        else:
-            print("  No expected nodes configured")
+        except SetupError as e:
+            print(f"  Error discovering nodes: {e.message}")
         print()
-        print("Workflow:")
-        if config.workflow.file:
-            print(f"  File: {config.workflow.file}")
+        print("Workflows:")
+        if config.workflow.files:
+            print(f"  Files ({len(config.workflow.files)}):")
+            for wf in config.workflow.files:
+                print(f"    - {wf}")
             print(f"  Timeout: {config.workflow.timeout}s")
         else:
-            print("  No workflow configured")
+            print("  No workflows configured")
 
         return 0
 
@@ -157,8 +168,9 @@ jobs:
 name = "MyNode"
 python_version = "3.10"
 
-[test.verification]
-expected_nodes = ["MyNode1", "MyNode2"]
+[test.workflows]
+files = ["workflows/basic.json"]
+timeout = 120
 ''')
 
     return 0
@@ -205,6 +217,11 @@ def main(args=None) -> int:
         "--platform", "-p",
         choices=["linux", "windows", "windows-portable"],
         help="Run on specific platform only",
+    )
+    run_parser.add_argument(
+        "--level", "-l",
+        choices=["install", "registration", "instantiation", "validation"],
+        help="Stop at a specific test level (default: run all levels + workflows)",
     )
     run_parser.add_argument(
         "--dry-run",

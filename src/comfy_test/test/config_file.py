@@ -11,11 +11,8 @@ Example:
     python_version = "3.10"
     cpu_only = true
 
-    [test.verification]
-    expected_nodes = ["MyNode1", "MyNode2"]
-
-    [test.workflow]
-    file = "tests/workflows/smoke_test.json"
+    [test.workflows]
+    files = ["workflows/basic.json", "workflows/advanced.json"]
     timeout = 120
 """
 
@@ -148,12 +145,14 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
         windows = true
         windows_portable = true
 
-        [test.verification]
-        expected_nodes = ["Node1", "Node2"]
-
-        [test.workflow]
-        file = "tests/workflows/smoke.json"
+        [test.workflows]
+        files = ["workflows/basic.json", "workflows/advanced.json"]
         timeout = 120
+
+        # Legacy format (still supported):
+        # [test.workflow]
+        # file = "tests/workflows/smoke.json"
+        # timeout = 120
 
         [test.linux]
         skip_workflow = false
@@ -190,13 +189,17 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
     # Parse platforms section
     platforms = test_section.get("platforms", {})
 
-    # Parse verification section
-    verification = test_section.get("verification", {})
-    expected_nodes = verification.get("expected_nodes", [])
-
-    # Parse workflow section
+    # Parse workflow section - support both new 'workflows' and legacy 'workflow'
+    workflows_data = test_section.get("workflows", {})
     workflow_data = test_section.get("workflow", {})
-    workflow = _parse_workflow_config(workflow_data, base_dir)
+
+    # Merge: new format takes precedence
+    if workflows_data:
+        workflow = _parse_workflow_config(workflows_data, base_dir)
+    elif workflow_data:
+        workflow = _parse_workflow_config(workflow_data, base_dir)
+    else:
+        workflow = _parse_workflow_config({}, base_dir)
 
     # Parse platform-specific configs
     linux_config = _parse_platform_config(
@@ -219,7 +222,6 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
             python_version=python_version,
             cpu_only=cpu_only,
             timeout=timeout,
-            expected_nodes=expected_nodes,
             workflow=workflow,
             linux=linux_config,
             windows=windows_config,
@@ -230,14 +232,28 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
 
 
 def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConfig:
-    """Parse workflow configuration section."""
-    file_path = data.get("file")
-    if file_path:
-        file_path = base_dir / file_path
+    """Parse workflow configuration section.
+
+    Supports both new format with 'files' list and legacy format with 'file' string.
+    """
+    files = []
+
+    # New format: files = ["workflow1.json", "workflow2.json"]
+    if "files" in data:
+        files = [base_dir / f for f in data["files"]]
+
+    # Legacy format: file = "workflow.json"
+    file_path = None
+    if "file" in data:
+        file_path = base_dir / data["file"]
+        # If no files specified, use legacy file
+        if not files:
+            files = [file_path]
 
     return WorkflowConfig(
-        file=file_path,
+        files=files,
         timeout=data.get("timeout", 120),
+        file=file_path,  # Keep for backwards compatibility
     )
 
 

@@ -29,10 +29,11 @@ Create comfy-test.toml in your custom node directory:
 
     [test]
     name = "MyNode"
-    expected_nodes = ["MyNode1", "MyNode2"]
 
     [test.workflow]
     file = "tests/workflows/smoke_test.json"
+
+Nodes are auto-discovered from NODE_CLASS_MAPPINGS in your __init__.py.
 
 ## GitHub Actions
 
@@ -54,6 +55,7 @@ __version__ = "0.0.3"
 from .test.config import TestConfig, WorkflowConfig, PlatformTestConfig
 from .test.config_file import load_config, discover_config, CONFIG_FILE_NAMES
 from .test.manager import TestManager, TestResult
+from .test.node_discovery import discover_nodes
 from .errors import (
     TestError,
     ConfigError,
@@ -79,6 +81,8 @@ __all__ = [
     # Manager
     "TestManager",
     "TestResult",
+    # Node discovery
+    "discover_nodes",
     # Errors
     "TestError",
     "ConfigError",

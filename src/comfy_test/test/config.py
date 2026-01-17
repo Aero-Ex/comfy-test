@@ -1,8 +1,38 @@
 """Configuration dataclasses for installation tests."""
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional, List
+
+
+class TestLevel(str, Enum):
+    """Test levels for progressive testing.
+
+    Each level includes all previous levels:
+    - install: Setup ComfyUI, install node, install deps
+    - registration: Start server, check nodes in object_info
+    - instantiation: Call each node's constructor, verify no errors
+    - validation: Load workflows, validate schema + graph + types
+    """
+    INSTALL = "install"
+    REGISTRATION = "registration"
+    INSTANTIATION = "instantiation"
+    VALIDATION = "validation"
+
+    @classmethod
+    def includes(cls, level: "TestLevel", check: "TestLevel") -> bool:
+        """Check if a level includes another level.
+
+        Args:
+            level: The level being run
+            check: The level to check if included
+
+        Returns:
+            True if running 'level' includes 'check'
+        """
+        order = [cls.INSTALL, cls.REGISTRATION, cls.INSTANTIATION, cls.VALIDATION]
+        return order.index(level) >= order.index(check)
 
 
 @dataclass
@@ -10,17 +40,26 @@ class WorkflowConfig:
     """Configuration for test workflow execution.
 
     Args:
-        file: Path to workflow JSON file (relative to node directory)
+        files: List of paths to workflow JSON files (relative to node directory)
         timeout: Timeout in seconds for workflow execution
+        file: Deprecated - use files instead. Kept for backwards compatibility.
     """
 
-    file: Optional[Path] = None
+    files: List[Path] = field(default_factory=list)
     timeout: int = 120
+    file: Optional[Path] = None  # Deprecated, kept for backwards compatibility
 
     def __post_init__(self):
         """Validate and normalize configuration."""
+        # Handle deprecated 'file' field - migrate to 'files'
         if self.file is not None:
             self.file = Path(self.file)
+            if not self.files:
+                self.files = [self.file]
+
+        # Normalize files to Path objects
+        self.files = [Path(f) for f in self.files]
+
         if self.timeout <= 0:
             raise ValueError(f"Timeout must be positive, got {self.timeout}")
 
@@ -53,7 +92,6 @@ class TestConfig:
         python_version: Python version for venv (e.g., "3.10")
         cpu_only: Use --cpu flag (no GPU required)
         timeout: Global timeout in seconds for setup operations
-        expected_nodes: Node names that must exist after install
         workflow: Optional workflow to execute for end-to-end testing
         linux: Linux-specific test configuration
         windows: Windows-specific test configuration
@@ -62,8 +100,7 @@ class TestConfig:
     Example:
         config = TestConfig(
             name="ComfyUI-MyNode",
-            expected_nodes=["MyNode1", "MyNode2"],
-            workflow=WorkflowConfig(file=Path("tests/workflows/smoke.json")),
+            workflow=WorkflowConfig(files=[Path("workflows/basic.json")]),
         )
     """
 
@@ -72,7 +109,6 @@ class TestConfig:
     python_version: str = "3.10"
     cpu_only: bool = True
     timeout: int = 300
-    expected_nodes: List[str] = field(default_factory=list)
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     linux: PlatformTestConfig = field(default_factory=PlatformTestConfig)
     windows: PlatformTestConfig = field(default_factory=PlatformTestConfig)
