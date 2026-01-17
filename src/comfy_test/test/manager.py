@@ -511,7 +511,7 @@ result = {{
 }}
 print(json.dumps(result))
 '''.format(
-            node_dir=str(paths.custom_nodes / self.node_dir.name),
+            node_dir=str(paths.custom_nodes_dir / self.node_dir.name),
             cuda_packages_json=json.dumps(cuda_packages),
         )
 
