@@ -20,8 +20,15 @@ jobs:
   test-linux:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout node
         uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.action_repository }}
+          ref: ${{ github.action_ref }}
+          path: .comfy-test-src
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -32,7 +39,7 @@ jobs:
         run: pip install uv
 
       - name: Install comfy-test
-        run: pip install comfy-test
+        run: pip install ./.comfy-test-src
 
       - name: Run installation test
         run: comfy-test run --platform linux --config ${{ inputs.config-file }}
@@ -48,8 +55,15 @@ jobs:
   test-windows:
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout node
         uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.action_repository }}
+          ref: ${{ github.action_ref }}
+          path: .comfy-test-src
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -60,7 +74,7 @@ jobs:
         run: pip install uv
 
       - name: Install comfy-test
-        run: pip install comfy-test
+        run: pip install ./.comfy-test-src
 
       - name: Run installation test
         run: comfy-test run --platform windows --config ${{ inputs.config-file }}
@@ -76,8 +90,15 @@ jobs:
   test-windows-portable:
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout node
         uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.action_repository }}
+          ref: ${{ github.action_ref }}
+          path: .comfy-test-src
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -85,7 +106,7 @@ jobs:
           python-version: ${{ inputs.python-version }}
 
       - name: Install comfy-test
-        run: pip install comfy-test
+        run: pip install ./.comfy-test-src
 
       - name: Run installation test
         run: comfy-test run --platform windows-portable --config ${{ inputs.config-file }}

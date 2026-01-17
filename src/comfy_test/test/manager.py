@@ -57,6 +57,12 @@ class TestManager:
         ...     print(f"{result.platform}: {'PASS' if result.success else 'FAIL'}")
     """
 
+    # All possible levels in order
+    ALL_LEVELS = [
+        TestLevel.SYNTAX, TestLevel.INSTALL, TestLevel.REGISTRATION,
+        TestLevel.INSTANTIATION, TestLevel.VALIDATION, TestLevel.EXECUTION
+    ]
+
     def __init__(
         self,
         config: TestConfig,
@@ -66,6 +72,27 @@ class TestManager:
         self.config = config
         self.node_dir = Path(node_dir) if node_dir else Path.cwd()
         self._log = log_callback or (lambda msg: print(msg))
+        self._level_index = 0
+        self._total_levels = 0
+
+    def _log_level_start(self, level: TestLevel, in_config: bool) -> None:
+        """Log the start of a test level with clear formatting."""
+        self._level_index += 1
+        level_name = level.value.upper()
+        status = "" if in_config else " (implicit)"
+        self._log(f"\n[{self._level_index}/{self._total_levels}] {level_name}{status}")
+        self._log("-" * 40)
+
+    def _log_level_skip(self, level: TestLevel) -> None:
+        """Log a skipped level."""
+        self._level_index += 1
+        level_name = level.value.upper()
+        self._log(f"\n[{self._level_index}/{self._total_levels}] {level_name}: SKIPPED")
+
+    def _log_level_done(self, level: TestLevel, message: str = "OK") -> None:
+        """Log successful completion of a level."""
+        level_name = level.value.upper()
+        self._log(f"[{level_name}] {message}")
 
     def run_all(
         self,
@@ -127,8 +154,12 @@ class TestManager:
         # Resolve dependencies (e.g., validation needs install)
         config_levels = TestLevel.resolve_dependencies(requested_levels)
 
+        # Calculate total levels for progress display
+        self._level_index = 0
+        self._total_levels = len([l for l in self.ALL_LEVELS if l in config_levels])
+
         self._log(f"\n{'='*60}")
-        self._log(f"Testing on {platform_name}")
+        self._log(f"Testing: {platform_name}")
         self._log(f"Levels: {', '.join(l.value for l in config_levels)}")
         self._log(f"{'='*60}")
 
@@ -138,10 +169,11 @@ class TestManager:
         try:
             # === SYNTAX LEVEL ===
             if TestLevel.SYNTAX not in config_levels:
-                self._log("\n[syntax] Skipped")
+                self._log_level_skip(TestLevel.SYNTAX)
             else:
-                self._log("\n[syntax] Checking project structure...")
+                self._log_level_start(TestLevel.SYNTAX, TestLevel.SYNTAX in requested_levels)
                 self._check_syntax()
+                self._log_level_done(TestLevel.SYNTAX, "PASSED")
 
             # Check if we need install level for later levels
             needs_install = any(l in config_levels for l in [
@@ -165,23 +197,21 @@ class TestManager:
 
                 # === INSTALL LEVEL ===
                 # Always run install if any later level needs it
-                self._log("\n[install] Setting up ComfyUI...")
+                self._log_level_start(TestLevel.INSTALL, TestLevel.INSTALL in requested_levels)
+                self._log("Setting up ComfyUI...")
                 paths = platform.setup_comfyui(self.config, work_path)
 
-                self._log("[install] Installing custom node...")
+                self._log("Installing custom node...")
                 platform.install_node(paths, self.node_dir)
 
                 node_reqs = get_node_reqs(self.node_dir)
                 if node_reqs:
-                    self._log(f"[install] Installing {len(node_reqs)} node dependency(ies)...")
+                    self._log(f"Installing {len(node_reqs)} node dependency(ies)...")
                     for name, repo in node_reqs:
                         self._log(f"  {name} from {repo}")
                         platform.install_node_from_repo(paths, repo, name)
-                else:
-                    self._log("[install] No node dependencies to install")
 
-                if TestLevel.INSTALL not in config_levels:
-                    self._log("[install] (implicit - needed for later levels)")
+                self._log_level_done(TestLevel.INSTALL, "PASSED")
 
                 # Check if we need server for remaining levels
                 needs_server = any(l in config_levels for l in [
@@ -213,28 +243,33 @@ class TestManager:
 
                     # === REGISTRATION LEVEL ===
                     if TestLevel.REGISTRATION not in config_levels:
-                        self._log("\n[registration] Skipped")
+                        self._log_level_skip(TestLevel.REGISTRATION)
                     else:
-                        self._log("\n[registration] Verifying node registration...")
+                        self._log_level_start(TestLevel.REGISTRATION, TestLevel.REGISTRATION in requested_levels)
+                        self._log("Verifying node registration...")
                         api.verify_nodes(expected_nodes)
-                        self._log(f"[registration] All {len(expected_nodes)} expected nodes found!")
+                        self._log(f"All {len(expected_nodes)} expected nodes found!")
+                        self._log_level_done(TestLevel.REGISTRATION, "PASSED")
 
                     # === INSTANTIATION LEVEL ===
                     if TestLevel.INSTANTIATION not in config_levels:
-                        self._log("\n[instantiation] Skipped")
+                        self._log_level_skip(TestLevel.INSTANTIATION)
                     else:
-                        self._log("\n[instantiation] Testing node constructors...")
+                        self._log_level_start(TestLevel.INSTANTIATION, TestLevel.INSTANTIATION in requested_levels)
+                        self._log("Testing node constructors...")
                         self._test_instantiation(platform, paths, expected_nodes, cuda_packages)
-                        self._log(f"[instantiation] All {len(expected_nodes)} node(s) instantiated successfully!")
+                        self._log(f"All {len(expected_nodes)} node(s) instantiated successfully!")
+                        self._log_level_done(TestLevel.INSTANTIATION, "PASSED")
 
                     # === VALIDATION LEVEL ===
                     if TestLevel.VALIDATION not in config_levels:
-                        self._log("\n[validation] Skipped")
+                        self._log_level_skip(TestLevel.VALIDATION)
                     else:
+                        self._log_level_start(TestLevel.VALIDATION, TestLevel.VALIDATION in requested_levels)
                         workflow_files = self._get_workflow_files()
 
                         if workflow_files:
-                            self._log(f"\n[validation] Validating {len(workflow_files)} workflow(s)...")
+                            self._log(f"Validating {len(workflow_files)} workflow(s)...")
                             object_info = api.get_object_info()
                             validator = WorkflowValidator(
                                 object_info,
@@ -277,19 +312,26 @@ class TestManager:
                                     f"Workflow validation failed ({len(all_errors)} error(s))",
                                     [err for _, err in all_errors]
                                 )
-                            self._log(f"[validation] All {len(workflow_files)} workflow(s) validated!")
+                            self._log(f"All {len(workflow_files)} workflow(s) validated!")
+                            self._log_level_done(TestLevel.VALIDATION, "PASSED")
                         else:
-                            self._log("\n[validation] No workflows to validate")
+                            self._log("No workflows configured")
+                            self._log_level_done(TestLevel.VALIDATION, "PASSED (no workflows)")
 
                     # === EXECUTION LEVEL ===
                     if TestLevel.EXECUTION not in config_levels:
-                        self._log("\n[execution] Skipped")
+                        self._log_level_skip(TestLevel.EXECUTION)
                     elif not self.config.workflow.files:
-                        self._log("\n[execution] No workflows configured")
+                        self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
+                        self._log("No workflows configured")
+                        self._log_level_done(TestLevel.EXECUTION, "PASSED (no workflows)")
                     elif platform_config.skip_workflow:
-                        self._log("\n[execution] Skipped (platform config)")
+                        self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
+                        self._log("Skipped per platform config")
+                        self._log_level_done(TestLevel.EXECUTION, "SKIPPED")
                     else:
-                        self._log(f"\n[execution] Running {len(self.config.workflow.files)} workflow(s)...")
+                        self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
+                        self._log(f"Running {len(self.config.workflow.files)} workflow(s)...")
                         runner = WorkflowRunner(api, self._log)
                         for workflow_file in self.config.workflow.files:
                             self._log(f"  Running: {workflow_file.name}")
@@ -298,6 +340,7 @@ class TestManager:
                                 timeout=self.config.workflow.timeout,
                             )
                             self._log(f"    Status: {result['status']}")
+                        self._log_level_done(TestLevel.EXECUTION, "PASSED")
 
             self._log(f"\n{platform_name}: PASSED")
             return TestResult(platform_name, True)
@@ -316,44 +359,40 @@ class TestManager:
 
     def _dry_run(self, platform_name: str, levels: List[TestLevel]) -> TestResult:
         """Show what would be done without doing it."""
-        self._log("[DRY RUN] Would run:")
+        self._log("\n[DRY RUN] Would execute the following levels:\n")
 
-        if TestLevel.SYNTAX in levels:
-            self._log(f"  [syntax] Check pyproject.toml vs requirements.txt")
-        else:
-            self._log(f"  [syntax] Skipped")
+        level_num = 0
+        total = len([l for l in self.ALL_LEVELS if l in levels])
 
-        if TestLevel.INSTALL in levels:
-            self._log(f"  [install] Setup ComfyUI ({self.config.comfyui_version})")
-            self._log(f"  [install] Install node: {self.node_dir.name}")
-            self._log(f"  [install] Install node dependencies (from comfy-env.toml)")
-        else:
-            self._log(f"  [install] Skipped")
+        for test_level in self.ALL_LEVELS:
+            level_name = test_level.value.upper()
+            if test_level in levels:
+                level_num += 1
+                self._log(f"[{level_num}/{total}] {level_name}")
+                self._log("-" * 40)
 
-        if TestLevel.REGISTRATION in levels:
-            self._log(f"  [registration] Verify nodes in object_info")
-        else:
-            self._log(f"  [registration] Skipped")
-
-        if TestLevel.INSTANTIATION in levels:
-            self._log(f"  [instantiation] Test node constructors")
-        else:
-            self._log(f"  [instantiation] Skipped")
-
-        if TestLevel.VALIDATION in levels:
-            self._log(f"  [validation] Validate workflows (schema + graph + types)")
-        else:
-            self._log(f"  [validation] Skipped")
-
-        if TestLevel.EXECUTION in levels:
-            if self.config.workflow.files:
-                self._log(f"  [execution] Run {len(self.config.workflow.files)} workflow(s):")
-                for wf in self.config.workflow.files:
-                    self._log(f"    - {wf}")
+                if test_level == TestLevel.SYNTAX:
+                    self._log("  Check pyproject.toml vs requirements.txt")
+                elif test_level == TestLevel.INSTALL:
+                    self._log(f"  Setup ComfyUI ({self.config.comfyui_version})")
+                    self._log(f"  Install node: {self.node_dir.name}")
+                    self._log("  Install node dependencies (from comfy-env.toml)")
+                elif test_level == TestLevel.REGISTRATION:
+                    self._log("  Verify nodes in object_info")
+                elif test_level == TestLevel.INSTANTIATION:
+                    self._log("  Test node constructors")
+                elif test_level == TestLevel.VALIDATION:
+                    self._log("  Validate workflows (schema + graph + types)")
+                elif test_level == TestLevel.EXECUTION:
+                    if self.config.workflow.files:
+                        self._log(f"  Run {len(self.config.workflow.files)} workflow(s):")
+                        for wf in self.config.workflow.files:
+                            self._log(f"    - {wf}")
+                    else:
+                        self._log("  No workflows configured")
+                self._log("")
             else:
-                self._log(f"  [execution] No workflows configured")
-        else:
-            self._log(f"  [execution] Skipped")
+                self._log(f"[ ] {level_name}: SKIPPED\n")
 
         return TestResult(platform_name, True, details="Dry run")
 
@@ -370,22 +409,20 @@ class TestManager:
         has_requirements = requirements.exists()
 
         if has_pyproject:
-            self._log("[syntax] Found pyproject.toml (modern format)")
+            self._log("Found pyproject.toml (modern format)")
         if has_requirements:
-            self._log("[syntax] Found requirements.txt (legacy format)")
+            self._log("Found requirements.txt (legacy format)")
 
         if has_pyproject and has_requirements:
-            self._log("[syntax] WARNING: Both pyproject.toml and requirements.txt exist")
-            self._log("[syntax] Consider migrating fully to pyproject.toml")
+            self._log("WARNING: Both pyproject.toml and requirements.txt exist")
+            self._log("Consider migrating fully to pyproject.toml")
         elif not has_pyproject and not has_requirements:
             raise TestError(
                 "No dependency file found",
                 "Expected pyproject.toml or requirements.txt in node directory"
             )
         elif has_requirements and not has_pyproject:
-            self._log("[syntax] WARNING: Consider migrating to pyproject.toml")
-
-        self._log("[syntax] OK")
+            self._log("WARNING: Consider migrating to pyproject.toml")
 
     def _get_workflow_files(self) -> List[Path]:
         """Get workflow files to validate/run.
