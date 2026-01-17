@@ -533,7 +533,16 @@ print(json.dumps(result))
             )
 
         try:
-            data = json.loads(result.stdout.strip())
+            # Extract JSON from stdout (may have log messages before it)
+            stdout = result.stdout.strip()
+            json_line = None
+            for line in stdout.splitlines():
+                line = line.strip()
+                if line.startswith("{"):
+                    json_line = line
+            if json_line is None:
+                raise json.JSONDecodeError("No JSON found in output", stdout, 0)
+            data = json.loads(json_line)
         except json.JSONDecodeError:
             raise TestError(
                 "Instantiation test returned invalid JSON",
