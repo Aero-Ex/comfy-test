@@ -424,6 +424,74 @@ class TestManager:
         elif has_requirements and not has_pyproject:
             self._log("WARNING: Consider migrating to pyproject.toml")
 
+        # Check for problematic unicode characters in Python files
+        self._check_unicode_characters()
+
+    def _check_unicode_characters(self) -> None:
+        """Check Python files for problematic unicode characters.
+
+        Scans all .py files in the node directory for characters that can
+        cause issues on Windows, such as curly quotes (often copy-pasted
+        from documentation).
+
+        Raises:
+            TestError: If problematic characters are found
+        """
+        # Problematic characters and their safe replacements
+        problematic_chars = {
+            '\u2018': "'",  # Left single quote
+            '\u2019': "'",  # Right single quote
+            '\u201c': '"',  # Left double quote
+            '\u201d': '"',  # Right double quote
+            '\u2013': '-',  # En dash
+            '\u2014': '-',  # Em dash
+            '\u2026': '...',  # Ellipsis
+        }
+
+        issues = []
+
+        for py_file in self.node_dir.rglob("*.py"):
+            # Skip common non-source directories
+            rel_path = py_file.relative_to(self.node_dir)
+            parts = rel_path.parts
+            if any(p in ('.git', '__pycache__', '.venv', 'venv', 'node_modules') for p in parts):
+                continue
+
+            try:
+                content = py_file.read_text(encoding='utf-8')
+            except UnicodeDecodeError as e:
+                issues.append(f"{rel_path}: Failed to decode as UTF-8: {e}")
+                continue
+
+            file_issues = []
+            for line_num, line in enumerate(content.splitlines(), 1):
+                for char, replacement in problematic_chars.items():
+                    if char in line:
+                        col = line.index(char) + 1
+                        char_name = {
+                            '\u2018': 'left single quote',
+                            '\u2019': 'right single quote',
+                            '\u201c': 'left double quote',
+                            '\u201d': 'right double quote',
+                            '\u2013': 'en dash',
+                            '\u2014': 'em dash',
+                            '\u2026': 'ellipsis',
+                        }.get(char, f'U+{ord(char):04X}')
+                        file_issues.append(
+                            f"  Line {line_num}, col {col}: {char_name} ({repr(char)}) - use {repr(replacement)}"
+                        )
+
+            if file_issues:
+                issues.append(f"{rel_path}:\n" + "\n".join(file_issues))
+
+        if issues:
+            raise TestError(
+                "Problematic unicode characters found in Python files",
+                "These characters can cause issues on Windows:\n\n" + "\n\n".join(issues)
+            )
+
+        self._log("Unicode check: OK (no problematic characters found)")
+
     def _get_workflow_files(self) -> List[Path]:
         """Get workflow files to validate/run.
 
@@ -511,7 +579,7 @@ result = {{
 }}
 print(json.dumps(result))
 '''.format(
-            node_dir=str(paths.custom_nodes_dir / self.node_dir.name),
+            node_dir=str(paths.custom_nodes_dir / self.node_dir.name).replace("\\", "/"),
             cuda_packages_json=json.dumps(cuda_packages),
         )
 
