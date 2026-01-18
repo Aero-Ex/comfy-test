@@ -122,12 +122,23 @@ class WindowsPortableTestPlatform(TestPlatform):
 
         target_dir = paths.custom_nodes_dir / node_name
 
-        # Copy node directory
+        # Copy node directory (ignore work_dir and common non-source dirs to avoid recursion)
         self._log(f"Copying {node_name} to custom_nodes/...")
         if target_dir.exists():
             shutil.rmtree(target_dir)
 
-        shutil.copytree(node_dir, target_dir)
+        def ignore_patterns(directory, files):
+            ignored = set()
+            for f in files:
+                # Ignore common non-source directories
+                if f in {'.git', '__pycache__', '.venv', 'venv', 'node_modules', '.comfy-test-env'}:
+                    ignored.add(f)
+                # Ignore if this is the work_dir (prevents infinite recursion)
+                if (Path(directory) / f).resolve() == paths.work_dir.resolve():
+                    ignored.add(f)
+            return ignored
+
+        shutil.copytree(node_dir, target_dir, ignore=ignore_patterns)
 
         # Install requirements.txt first (install.py may depend on these)
         requirements_file = target_dir / "requirements.txt"
