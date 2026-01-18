@@ -7,7 +7,7 @@ from typing import Optional, Callable, List
 
 from .config import TestConfig, TestLevel
 from .comfy_env import get_cuda_packages, get_node_reqs
-from .node_discovery import discover_nodes
+from .node_discovery import discover_nodes, discover_nodes_subprocess
 from .platform import get_platform, TestPlatform, TestPaths
 from ..comfyui.server import ComfyUIServer
 from ..comfyui.validator import WorkflowValidator
@@ -229,7 +229,13 @@ class TestManager:
                     self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
 
                 # Discover nodes from NODE_CLASS_MAPPINGS before starting server
-                expected_nodes = discover_nodes(self.node_dir)
+                # Use subprocess to run in test venv where dependencies are installed
+                expected_nodes = discover_nodes_subprocess(
+                    paths.custom_nodes_dir / self.node_dir.name,
+                    paths.python,
+                    cuda_packages,
+                    paths.comfyui_dir,
+                )
                 self._log(f"Discovered {len(expected_nodes)} node(s): {', '.join(expected_nodes)}")
 
                 # === Start server for remaining levels ===
