@@ -173,6 +173,24 @@ class ComfyUIAPI:
         except requests.RequestException:
             pass  # Best effort
 
+    def free_memory(self, unload_models: bool = True) -> None:
+        """Free memory and optionally unload models.
+
+        Calls ComfyUI's /free endpoint to release cached data.
+        This helps prevent memory accumulation when running multiple workflows.
+
+        Args:
+            unload_models: If True, also unload any loaded models
+        """
+        try:
+            self.session.post(
+                f"{self.base_url}/free",
+                json={"unload_models": unload_models, "free_memory": True},
+                timeout=self.timeout,
+            )
+        except requests.RequestException:
+            pass  # Best effort - don't fail if cleanup fails
+
     def close(self) -> None:
         """Close the session."""
         self.session.close()

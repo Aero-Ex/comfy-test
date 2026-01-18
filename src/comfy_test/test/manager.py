@@ -324,8 +324,9 @@ class TestManager:
                             )
 
                             all_errors = []
-                            for workflow_path in workflow_files:
-                                self._log(f"  {workflow_path.name}:")
+                            total_workflows = len(workflow_files)
+                            for idx, workflow_path in enumerate(workflow_files, 1):
+                                self._log(f"  [{idx}/{total_workflows}] VALIDATING {workflow_path.name}")
                                 validation_result = validator.validate_file(workflow_path)
 
                                 if not validation_result.is_valid:
@@ -353,6 +354,9 @@ class TestManager:
                                 else:
                                     self._log(f"    Execution: Skipped (all nodes require CUDA)")
 
+                                # Free memory between workflows to prevent accumulation
+                                api.free_memory()
+
                             if all_errors:
                                 raise WorkflowValidationError(
                                     f"Workflow validation failed ({len(all_errors)} error(s))",
@@ -377,10 +381,11 @@ class TestManager:
                         self._log_level_done(TestLevel.EXECUTION, "SKIPPED")
                     else:
                         self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
-                        self._log(f"Running {len(self.config.workflow.run)} workflow(s)...")
+                        total_workflows = len(self.config.workflow.run)
+                        self._log(f"Running {total_workflows} workflow(s)...")
                         runner = WorkflowRunner(api, self._log)
-                        for workflow_file in self.config.workflow.run:
-                            self._log(f"  Running: {workflow_file.name}")
+                        for idx, workflow_file in enumerate(self.config.workflow.run, 1):
+                            self._log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
                             result = runner.run_workflow(
                                 workflow_file,
                                 timeout=self.config.workflow.timeout,
@@ -878,8 +883,9 @@ print(json.dumps(result))
                         )
 
                         all_errors = []
-                        for workflow_path in workflow_files:
-                            self._log(f"  {workflow_path.name}:")
+                        total_workflows = len(workflow_files)
+                        for idx, workflow_path in enumerate(workflow_files, 1):
+                            self._log(f"  [{idx}/{total_workflows}] VALIDATING {workflow_path.name}")
                             validation_result = validator.validate_file(workflow_path)
 
                             if not validation_result.is_valid:
@@ -907,6 +913,9 @@ print(json.dumps(result))
                             else:
                                 self._log(f"    Execution: Skipped (all nodes require CUDA)")
 
+                            # Free memory between workflows to prevent accumulation
+                            api.free_memory()
+
                         if all_errors:
                             raise WorkflowValidationError(
                                 f"Workflow validation failed ({len(all_errors)} error(s))",
@@ -922,10 +931,11 @@ print(json.dumps(result))
                     elif platform_config.skip_workflow:
                         self._log("Skipped per platform config")
                     else:
-                        self._log(f"Running {len(self.config.workflow.run)} workflow(s)...")
+                        total_workflows = len(self.config.workflow.run)
+                        self._log(f"Running {total_workflows} workflow(s)...")
                         runner = WorkflowRunner(api, self._log)
-                        for workflow_file in self.config.workflow.run:
-                            self._log(f"  Running: {workflow_file.name}")
+                        for idx, workflow_file in enumerate(self.config.workflow.run, 1):
+                            self._log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
                             result = runner.run_workflow(
                                 workflow_file,
                                 timeout=self.config.workflow.timeout,
