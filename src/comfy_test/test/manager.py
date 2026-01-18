@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional, Callable, List
 
@@ -13,6 +14,43 @@ from ..comfyui.server import ComfyUIServer
 from ..comfyui.validator import WorkflowValidator
 from ..comfyui.workflow import WorkflowRunner
 from ..errors import TestError, VerificationError, WorkflowValidationError
+
+
+@dataclass
+class TestState:
+    """State persisted between CLI invocations for multi-step CI.
+
+    This allows running test levels in separate CI steps while sharing
+    the ComfyUI environment setup between them.
+    """
+    comfyui_dir: str
+    python: str
+    custom_nodes_dir: str
+    venv_dir: Optional[str]
+    expected_nodes: List[str]
+    cuda_packages: List[str]
+    platform_name: str
+
+
+def save_state(state: TestState, work_dir: Path) -> None:
+    """Save test state to work directory for later resumption."""
+    state_file = work_dir / "state.json"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    with open(state_file, "w") as f:
+        json.dump(asdict(state), f, indent=2)
+
+
+def load_state(work_dir: Path) -> TestState:
+    """Load test state from work directory."""
+    state_file = work_dir / "state.json"
+    if not state_file.exists():
+        raise TestError(
+            "No state file found",
+            f"Expected {state_file}. Run install level first with --work-dir."
+        )
+    with open(state_file) as f:
+        data = json.load(f)
+    return TestState(**data)
 
 
 class TestResult:
@@ -462,7 +500,8 @@ class TestManager:
             # Skip common non-source directories
             rel_path = py_file.relative_to(self.node_dir)
             parts = rel_path.parts
-            if any(p in ('.git', '__pycache__', '.venv', 'venv', 'node_modules') for p in parts):
+            skip_dirs = {'.git', '__pycache__', '.venv', 'venv', 'node_modules', 'site-packages', 'lib', 'Lib'}
+            if any(p in skip_dirs or p.startswith('_env_') or p.startswith('.') for p in parts):
                 continue
 
             try:
@@ -666,3 +705,244 @@ print(json.dumps(result))
         if not workflow_path.is_absolute():
             workflow_path = self.node_dir / workflow_file
         return workflow_path
+
+    def run_single_level(
+        self,
+        platform_name: str,
+        level: TestLevel,
+        work_dir: Optional[Path] = None,
+        skip_setup: bool = False,
+    ) -> TestResult:
+        """Run a single test level (for multi-step CI).
+
+        This method is designed for CI workflows where each test level
+        runs as a separate step. State is persisted between steps via
+        the work_dir.
+
+        Args:
+            platform_name: Platform to test ('linux', 'windows', 'windows_portable')
+            level: Specific level to run
+            work_dir: Persistent directory for state (required for install and later levels)
+            skip_setup: If True, load state from work_dir instead of running install
+
+        Returns:
+            TestResult for this level
+
+        Example:
+            # Step 1: Run syntax (no setup needed)
+            manager.run_single_level('linux', TestLevel.SYNTAX)
+
+            # Step 2: Run install (saves state)
+            manager.run_single_level('linux', TestLevel.INSTALL, work_dir=Path('/tmp/ct'))
+
+            # Step 3: Run registration (loads state)
+            manager.run_single_level('linux', TestLevel.REGISTRATION,
+                                     work_dir=Path('/tmp/ct'), skip_setup=True)
+        """
+        # Check if level is in config
+        if level not in self.config.levels:
+            self._log(f"[{level.value.upper()}] SKIPPED (not in config)")
+            return TestResult(platform_name, True, details="Skipped - not in config")
+
+        self._log(f"\n{'='*60}")
+        self._log(f"Testing: {platform_name}")
+        self._log(f"Level: {level.value}")
+        self._log(f"{'='*60}")
+
+        try:
+            # === SYNTAX LEVEL ===
+            if level == TestLevel.SYNTAX:
+                self._log(f"\n[1/1] {level.value.upper()}")
+                self._log("-" * 40)
+                self._check_syntax()
+                self._log(f"[{level.value.upper()}] PASSED")
+                return TestResult(platform_name, True)
+
+            # === INSTALL LEVEL ===
+            if level == TestLevel.INSTALL:
+                if not work_dir:
+                    raise TestError(
+                        "work_dir required for install level",
+                        "Use --work-dir to specify a persistent directory"
+                    )
+
+                self._log(f"\n[1/1] {level.value.upper()}")
+                self._log("-" * 40)
+
+                platform = get_platform(platform_name, self._log)
+                work_dir.mkdir(parents=True, exist_ok=True)
+
+                self._log("Setting up ComfyUI...")
+                paths = platform.setup_comfyui(self.config, work_dir)
+
+                self._log("Installing custom node...")
+                platform.install_node(paths, self.node_dir)
+
+                node_reqs = get_node_reqs(self.node_dir)
+                if node_reqs:
+                    self._log(f"Installing {len(node_reqs)} node dependency(ies)...")
+                    for name, repo in node_reqs:
+                        self._log(f"  {name} from {repo}")
+                        platform.install_node_from_repo(paths, repo, name)
+
+                # Discover nodes and get CUDA packages for state
+                cuda_packages = get_cuda_packages(self.node_dir)
+                if cuda_packages:
+                    self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
+
+                expected_nodes = discover_nodes_subprocess(
+                    paths.custom_nodes_dir / self.node_dir.name,
+                    paths.python,
+                    cuda_packages,
+                    paths.comfyui_dir,
+                )
+                self._log(f"Discovered {len(expected_nodes)} node(s): {', '.join(expected_nodes)}")
+
+                # Save state for later levels
+                state = TestState(
+                    comfyui_dir=str(paths.comfyui_dir),
+                    python=str(paths.python),
+                    custom_nodes_dir=str(paths.custom_nodes_dir),
+                    venv_dir=str(paths.venv_dir) if paths.venv_dir else None,
+                    expected_nodes=list(expected_nodes),
+                    cuda_packages=cuda_packages,
+                    platform_name=platform_name,
+                )
+                save_state(state, work_dir)
+                self._log(f"State saved to {work_dir / 'state.json'}")
+
+                self._log(f"[{level.value.upper()}] PASSED")
+                return TestResult(platform_name, True)
+
+            # === LEVELS REQUIRING SERVER (registration, instantiation, validation, execution) ===
+            if not work_dir:
+                raise TestError(
+                    "work_dir required",
+                    "Use --work-dir to specify the directory containing state.json"
+                )
+
+            if not skip_setup:
+                raise TestError(
+                    "skip_setup required for levels after install",
+                    "Use --skip-setup to load state from work_dir"
+                )
+
+            # Load state from previous install
+            state = load_state(work_dir)
+
+            # Reconstruct paths from state
+            paths = TestPaths(
+                work_dir=work_dir,
+                comfyui_dir=Path(state.comfyui_dir),
+                python=Path(state.python),
+                custom_nodes_dir=Path(state.custom_nodes_dir),
+                venv_dir=Path(state.venv_dir) if state.venv_dir else None,
+            )
+
+            platform = get_platform(platform_name, self._log)
+            platform_config = self.config.get_platform_config(platform_name)
+
+            self._log(f"\n[1/1] {level.value.upper()}")
+            self._log("-" * 40)
+
+            # Start server for this level
+            self._log("Starting ComfyUI server...")
+            with ComfyUIServer(
+                platform, paths, self.config,
+                cuda_mock_packages=state.cuda_packages,
+                log_callback=self._log,
+            ) as server:
+                api = server.get_api()
+
+                if level == TestLevel.REGISTRATION:
+                    self._log("Verifying node registration...")
+                    api.verify_nodes(state.expected_nodes)
+                    self._log(f"All {len(state.expected_nodes)} expected nodes found!")
+
+                elif level == TestLevel.INSTANTIATION:
+                    self._log("Testing node constructors...")
+                    self._test_instantiation(platform, paths, state.expected_nodes, state.cuda_packages)
+                    self._log(f"All {len(state.expected_nodes)} node(s) instantiated successfully!")
+
+                elif level == TestLevel.VALIDATION:
+                    workflows_dir = self.node_dir / "workflows"
+                    workflow_files = sorted(workflows_dir.glob("*.json")) if workflows_dir.exists() else []
+
+                    if workflow_files:
+                        self._log(f"Validating {len(workflow_files)} workflow(s)...")
+                        object_info = api.get_object_info()
+                        validator = WorkflowValidator(
+                            object_info,
+                            cuda_packages=state.cuda_packages,
+                            cuda_node_types=set(),
+                        )
+
+                        all_errors = []
+                        for workflow_path in workflow_files:
+                            self._log(f"  {workflow_path.name}:")
+                            validation_result = validator.validate_file(workflow_path)
+
+                            if not validation_result.is_valid:
+                                for err in validation_result.errors:
+                                    self._log(f"    [ERROR] {err}")
+                                    all_errors.append((workflow_path.name, err))
+                            else:
+                                self._log(f"    Schema: OK")
+                                self._log(f"    Graph: OK")
+                                self._log(f"    Introspection: OK")
+
+                            # Try partial execution of non-CUDA prefix
+                            if validation_result.executable_nodes:
+                                with open(workflow_path) as f:
+                                    workflow = json.load(f)
+                                exec_result = validator.execute_prefix(workflow, api, timeout=self.config.workflow.timeout)
+
+                                if exec_result.executed_nodes:
+                                    self._log(f"    Execution: {len(exec_result.executed_nodes)} nodes executed")
+                                else:
+                                    self._log(f"    Execution: OK (no non-CUDA nodes)")
+                                if exec_result.execution_errors:
+                                    for node_id, error in exec_result.execution_errors.items():
+                                        self._log(f"      [WARN] Node {node_id}: {error}")
+                            else:
+                                self._log(f"    Execution: Skipped (all nodes require CUDA)")
+
+                        if all_errors:
+                            raise WorkflowValidationError(
+                                f"Workflow validation failed ({len(all_errors)} error(s))",
+                                [err for _, err in all_errors]
+                            )
+                        self._log(f"All {len(workflow_files)} workflow(s) validated!")
+                    else:
+                        self._log("No workflows configured")
+
+                elif level == TestLevel.EXECUTION:
+                    if not self.config.workflow.run:
+                        self._log("No workflows configured for execution")
+                    elif platform_config.skip_workflow:
+                        self._log("Skipped per platform config")
+                    else:
+                        self._log(f"Running {len(self.config.workflow.run)} workflow(s)...")
+                        runner = WorkflowRunner(api, self._log)
+                        for workflow_file in self.config.workflow.run:
+                            self._log(f"  Running: {workflow_file.name}")
+                            result = runner.run_workflow(
+                                workflow_file,
+                                timeout=self.config.workflow.timeout,
+                            )
+                            self._log(f"    Status: {result['status']}")
+
+            self._log(f"[{level.value.upper()}] PASSED")
+            return TestResult(platform_name, True)
+
+        except TestError as e:
+            self._log(f"\n{platform_name}: FAILED")
+            self._log(f"Error: {e.message}")
+            if e.details:
+                self._log(f"Details: {e.details}")
+            return TestResult(platform_name, False, str(e.message), e.details)
+
+        except Exception as e:
+            self._log(f"\n{platform_name}: FAILED (unexpected error)")
+            self._log(f"Error: {e}")
+            return TestResult(platform_name, False, str(e))

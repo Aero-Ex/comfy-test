@@ -22,13 +22,41 @@ def cmd_run(args) -> int:
         else:
             config = discover_config()
 
-        # Parse level if specified
+        # Create manager
+        manager = TestManager(config)
+
+        # Handle --only-level for single-level execution (multi-step CI)
+        if args.only_level:
+            only_level = TestLevel(args.only_level)
+            work_dir = Path(args.work_dir) if args.work_dir else None
+
+            if not args.platform:
+                print("Error: --platform required with --only-level", file=sys.stderr)
+                return 1
+
+            result = manager.run_single_level(
+                args.platform,
+                only_level,
+                work_dir=work_dir,
+                skip_setup=args.skip_setup,
+            )
+
+            # Report result
+            status = "PASS" if result.success else "FAIL"
+            print(f"\n{'='*60}")
+            print(f"RESULT: {status}")
+            print(f"{'='*60}")
+
+            if not result.success and result.error:
+                print(f"Error: {result.error}")
+
+            return 0 if result.success else 1
+
+        # Standard multi-level execution
+        # Parse level if specified (cumulative --level)
         level = None
         if args.level:
             level = TestLevel(args.level)
-
-        # Create manager
-        manager = TestManager(config)
 
         # Run tests
         if args.platform:
@@ -435,6 +463,20 @@ def main(args=None) -> int:
         "--level", "-l",
         choices=["syntax", "install", "registration", "instantiation", "validation", "execution"],
         help="Run only up to this level (overrides config)",
+    )
+    run_parser.add_argument(
+        "--only-level", "-L",
+        choices=["syntax", "install", "registration", "instantiation", "validation", "execution"],
+        help="Run ONLY this specific level (for multi-step CI)",
+    )
+    run_parser.add_argument(
+        "--work-dir", "-w",
+        help="Persistent work directory (for multi-step CI). State saved to work-dir/state.json",
+    )
+    run_parser.add_argument(
+        "--skip-setup",
+        action="store_true",
+        help="Skip ComfyUI setup, load state from --work-dir (for resuming after install)",
     )
     run_parser.add_argument(
         "--dry-run",

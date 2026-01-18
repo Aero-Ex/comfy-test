@@ -50,8 +50,34 @@ jobs:
       - name: Install comfy-test
         run: pip install ./.comfy-test-src
 
-      - name: Run installation test
-        run: comfy-test run --platform linux --config ${{ inputs.config-file }}
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform linux --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform linux --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Validation
+        id: validation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level validation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
 
       - name: Upload logs
         if: always()
@@ -86,8 +112,34 @@ jobs:
       - name: Install comfy-test
         run: pip install ./.comfy-test-src
 
-      - name: Run installation test
-        run: comfy-test run --platform windows --config ${{ inputs.config-file }}
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform windows --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform windows --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Validation
+        id: validation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level validation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
 
       - name: Upload logs
         if: always()
@@ -119,8 +171,34 @@ jobs:
       - name: Install comfy-test
         run: pip install ./.comfy-test-src
 
-      - name: Run installation test
-        run: comfy-test run --platform windows-portable --config ${{ inputs.config-file }}
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform windows-portable --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform windows-portable --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Validation
+        id: validation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level validation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
 
       - name: Upload logs
         if: always()
