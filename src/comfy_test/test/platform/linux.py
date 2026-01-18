@@ -54,6 +54,10 @@ class LinuxTestPlatform(TestPlatform):
 
         self._run_command(clone_args, cwd=work_dir)
 
+        # Create custom_nodes directory (git doesn't track empty directories)
+        custom_nodes_dir = comfyui_dir / "custom_nodes"
+        custom_nodes_dir.mkdir(exist_ok=True)
+
         # Create venv with uv
         self._log(f"Creating venv (Python {config.python_version})...")
         if venv_dir.exists():
@@ -91,9 +95,6 @@ class LinuxTestPlatform(TestPlatform):
                  "-r", str(requirements_file)],
                 cwd=work_dir,
             )
-
-        custom_nodes_dir = comfyui_dir / "custom_nodes"
-        custom_nodes_dir.mkdir(exist_ok=True)
 
         return TestPaths(
             work_dir=work_dir,
