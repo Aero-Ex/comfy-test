@@ -213,10 +213,10 @@ def cmd_screenshot(args) -> int:
         try:
             from .screenshot import (
                 WorkflowScreenshot,
-                capture_workflows,
                 check_dependencies,
                 ScreenshotError,
             )
+            from .screenshot_cache import ScreenshotCache
             check_dependencies()
         except ImportError as e:
             print(f"Error: {e}", file=sys.stderr)
@@ -261,6 +261,28 @@ def cmd_screenshot(args) -> int:
         # Determine output directory
         output_dir = Path(args.output) if args.output else None
 
+        # Initialize cache
+        cache = ScreenshotCache(node_dir)
+
+        # Filter workflows that need updating (unless --force)
+        def get_output_path(wf: Path) -> Path:
+            if output_dir:
+                return output_dir / wf.with_suffix(".png").name
+            return wf.with_suffix(".png")
+
+        if args.force:
+            workflows_to_capture = workflow_files
+            skipped = []
+        else:
+            workflows_to_capture = []
+            skipped = []
+            for wf in workflow_files:
+                out_path = get_output_path(wf)
+                if cache.needs_update(wf, out_path):
+                    workflows_to_capture.append(wf)
+                else:
+                    skipped.append(wf)
+
         # Determine server URL
         if args.server is True:
             # --server flag without URL, use default
@@ -277,16 +299,20 @@ def cmd_screenshot(args) -> int:
 
         # Dry run mode
         if args.dry_run:
-            print("Would capture screenshots for:")
-            for wf in workflow_files:
-                if output_dir:
-                    out_path = output_dir / wf.with_suffix(".png").name
-                else:
-                    out_path = wf.with_suffix(".png")
-                print(f"  {wf} -> {out_path}")
-            if use_existing_server:
-                print(f"Using existing server at: {server_url}")
+            if skipped:
+                print(f"Skipping {len(skipped)} unchanged workflow(s):")
+                for wf in skipped:
+                    print(f"  {wf.name} (cached)")
+            if workflows_to_capture:
+                print(f"Would capture {len(workflows_to_capture)} screenshot(s):")
+                for wf in workflows_to_capture:
+                    out_path = get_output_path(wf)
+                    print(f"  {wf} -> {out_path}")
             else:
+                print("All screenshots up to date.")
+            if use_existing_server and workflows_to_capture:
+                print(f"Using existing server at: {server_url}")
+            elif workflows_to_capture:
                 print("Would start ComfyUI server for screenshots")
             return 0
 
@@ -294,16 +320,29 @@ def cmd_screenshot(args) -> int:
         def log(msg: str) -> None:
             print(msg)
 
+        # Report skipped workflows
+        if skipped:
+            log(f"Skipping {len(skipped)} unchanged workflow(s)")
+
+        if not workflows_to_capture:
+            log("All screenshots up to date.")
+            return 0
+
         # Capture screenshots
+        results = []
+
         if use_existing_server:
             # Connect to existing server
             log(f"Connecting to existing server at {server_url}...")
-            results = capture_workflows(
-                workflow_files,
-                output_dir=output_dir,
-                server_url=server_url,
-                log_callback=log,
-            )
+            with WorkflowScreenshot(server_url, log_callback=log) as ws:
+                for wf in workflows_to_capture:
+                    out_path = get_output_path(wf)
+                    try:
+                        result = ws.capture(wf, out_path)
+                        cache.save_fingerprint(wf, out_path)
+                        results.append(result)
+                    except ScreenshotError as e:
+                        log(f"  ERROR: {e.message}")
         else:
             # Start our own server (requires full test environment)
             if not config:
@@ -340,12 +379,15 @@ def cmd_screenshot(args) -> int:
                     cuda_mock_packages=cuda_packages,
                     log_callback=log,
                 ) as server:
-                    results = capture_workflows(
-                        workflow_files,
-                        output_dir=output_dir,
-                        server_url=server.base_url,
-                        log_callback=log,
-                    )
+                    with WorkflowScreenshot(server.base_url, log_callback=log) as ws:
+                        for wf in workflows_to_capture:
+                            out_path = get_output_path(wf)
+                            try:
+                                result = ws.capture(wf, out_path)
+                                cache.save_fingerprint(wf, out_path)
+                                results.append(result)
+                            except ScreenshotError as e:
+                                log(f"  ERROR: {e.message}")
 
         # Report results
         print(f"\nCaptured {len(results)} screenshot(s)")
@@ -486,6 +528,11 @@ def main(args=None) -> int:
         "--dry-run",
         action="store_true",
         help="Show what would be captured without doing it",
+    )
+    screenshot_parser.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="Force regeneration, ignoring cache",
     )
     screenshot_parser.set_defaults(func=cmd_screenshot)
 
