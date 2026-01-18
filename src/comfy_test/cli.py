@@ -126,13 +126,19 @@ def cmd_info(args) -> int:
             print(f"  Error discovering nodes: {e.message}")
         print()
         print("Workflows:")
-        if config.workflow.files:
-            print(f"  Files ({len(config.workflow.files)}):")
-            for wf in config.workflow.files:
+        print(f"  Timeout: {config.workflow.timeout}s")
+        if config.workflow.run:
+            print(f"  Run (execution): {len(config.workflow.run)} workflow(s)")
+            for wf in config.workflow.run:
                 print(f"    - {wf}")
-            print(f"  Timeout: {config.workflow.timeout}s")
         else:
-            print("  No workflows configured")
+            print("  Run (execution): none configured")
+        if config.workflow.screenshot:
+            print(f"  Screenshot: {len(config.workflow.screenshot)} workflow(s)")
+            for wf in config.workflow.screenshot:
+                print(f"    - {wf}")
+        else:
+            print("  Screenshot: none configured")
 
         return 0
 
@@ -172,8 +178,9 @@ name = "MyNode"
 python_version = "3.10"
 
 [test.workflows]
-files = ["workflows/basic.json"]
 timeout = 120
+run = ["workflows/basic.json"]
+screenshot = ["workflows/basic.json"]
 ''')
 
     return 0
@@ -237,14 +244,14 @@ def cmd_screenshot(args) -> int:
             if not workflow_path.is_absolute():
                 workflow_path = node_dir / workflow_path
             workflow_files = [workflow_path]
-        elif config and config.workflow.files:
-            # Use workflows from config
-            workflow_files = config.workflow.files
+        elif config and config.workflow.screenshot:
+            # Use workflows from config's screenshot list
+            workflow_files = config.workflow.screenshot
         else:
             # Auto-discover from workflows/ directory
             workflows_dir = node_dir / "workflows"
             if workflows_dir.exists():
-                workflow_files = list(workflows_dir.glob("*.json"))
+                workflow_files = sorted(workflows_dir.glob("*.json"))
 
         if not workflow_files:
             print("No workflow files found.", file=sys.stderr)

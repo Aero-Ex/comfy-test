@@ -67,27 +67,37 @@ class TestLevel(str, Enum):
 
 @dataclass
 class WorkflowConfig:
-    """Configuration for test workflow execution.
+    """Configuration for workflow testing.
 
     Args:
-        files: List of paths to workflow JSON files (relative to node directory)
+        run: Workflows to execute end-to-end
+        screenshot: Workflows to capture screenshots of
         timeout: Timeout in seconds for workflow execution
-        file: Deprecated - use files instead. Kept for backwards compatibility.
+        files: Deprecated - use run instead
+        file: Deprecated - use run instead
     """
 
-    files: List[Path] = field(default_factory=list)
+    run: List[Path] = field(default_factory=list)
+    screenshot: List[Path] = field(default_factory=list)
     timeout: int = 120
-    file: Optional[Path] = None  # Deprecated, kept for backwards compatibility
+    files: List[Path] = field(default_factory=list)  # Deprecated
+    file: Optional[Path] = None  # Deprecated
 
     def __post_init__(self):
         """Validate and normalize configuration."""
-        # Handle deprecated 'file' field - migrate to 'files'
+        # Migrate deprecated 'files' to 'run'
+        if self.files and not self.run:
+            self.run = list(self.files)
+
+        # Handle deprecated 'file' field - migrate to 'run'
         if self.file is not None:
             self.file = Path(self.file)
-            if not self.files:
-                self.files = [self.file]
+            if not self.run:
+                self.run = [self.file]
 
-        # Normalize files to Path objects
+        # Normalize to Path objects
+        self.run = [Path(f) for f in self.run]
+        self.screenshot = [Path(f) for f in self.screenshot]
         self.files = [Path(f) for f in self.files]
 
         if self.timeout <= 0:
@@ -132,7 +142,7 @@ class TestConfig:
         config = TestConfig(
             name="ComfyUI-MyNode",
             levels=[TestLevel.INSTALL, TestLevel.REGISTRATION],
-            workflow=WorkflowConfig(files=[Path("workflows/basic.json")]),
+            workflow=WorkflowConfig(run=[Path("workflows/basic.json")]),
         )
     """
 

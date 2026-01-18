@@ -180,7 +180,7 @@ class TestManager:
                 TestLevel.INSTALL, TestLevel.REGISTRATION,
                 TestLevel.INSTANTIATION, TestLevel.VALIDATION
             ])
-            run_workflows = self.config.workflow.files
+            run_workflows = self.config.workflow.run
 
             if not needs_install and not run_workflows:
                 # Only syntax was requested and no workflows
@@ -272,7 +272,9 @@ class TestManager:
                         self._log_level_skip(TestLevel.VALIDATION)
                     else:
                         self._log_level_start(TestLevel.VALIDATION, TestLevel.VALIDATION in requested_levels)
-                        workflow_files = self._get_workflow_files()
+                        # Always auto-discover ALL workflows in workflows/ folder
+                        workflows_dir = self.node_dir / "workflows"
+                        workflow_files = sorted(workflows_dir.glob("*.json")) if workflows_dir.exists() else []
 
                         if workflow_files:
                             self._log(f"Validating {len(workflow_files)} workflow(s)...")
@@ -327,9 +329,9 @@ class TestManager:
                     # === EXECUTION LEVEL ===
                     if TestLevel.EXECUTION not in config_levels:
                         self._log_level_skip(TestLevel.EXECUTION)
-                    elif not self.config.workflow.files:
+                    elif not self.config.workflow.run:
                         self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
-                        self._log("No workflows configured")
+                        self._log("No workflows configured for execution")
                         self._log_level_done(TestLevel.EXECUTION, "PASSED (no workflows)")
                     elif platform_config.skip_workflow:
                         self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
@@ -337,9 +339,9 @@ class TestManager:
                         self._log_level_done(TestLevel.EXECUTION, "SKIPPED")
                     else:
                         self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
-                        self._log(f"Running {len(self.config.workflow.files)} workflow(s)...")
+                        self._log(f"Running {len(self.config.workflow.run)} workflow(s)...")
                         runner = WorkflowRunner(api, self._log)
-                        for workflow_file in self.config.workflow.files:
+                        for workflow_file in self.config.workflow.run:
                             self._log(f"  Running: {workflow_file.name}")
                             result = runner.run_workflow(
                                 workflow_file,
@@ -390,12 +392,12 @@ class TestManager:
                 elif test_level == TestLevel.VALIDATION:
                     self._log("  Validate workflows (schema + graph + types)")
                 elif test_level == TestLevel.EXECUTION:
-                    if self.config.workflow.files:
-                        self._log(f"  Run {len(self.config.workflow.files)} workflow(s):")
-                        for wf in self.config.workflow.files:
+                    if self.config.workflow.run:
+                        self._log(f"  Run {len(self.config.workflow.run)} workflow(s):")
+                        for wf in self.config.workflow.run:
                             self._log(f"    - {wf}")
                     else:
-                        self._log("  No workflows configured")
+                        self._log("  No workflows configured for execution")
                 self._log("")
             else:
                 self._log(f"[ ] {level_name}: SKIPPED\n")
@@ -499,19 +501,14 @@ class TestManager:
         self._log("Unicode check: OK (no problematic characters found)")
 
     def _get_workflow_files(self) -> List[Path]:
-        """Get workflow files to validate/run.
+        """Get workflow files configured for execution.
 
-        Returns files from config, or auto-discovers from workflows/ directory.
+        Note: Validation always auto-discovers from workflows/ directory.
+        This method returns files configured in config.workflow.run.
+
+        Deprecated: Use config.workflow.run directly instead.
         """
-        # If config specifies files, use those
-        if self.config.workflow.files:
-            return self.config.workflow.files
-
-        # Otherwise auto-discover from workflows/ directory
-        workflows_dir = self.node_dir / "workflows"
-        if workflows_dir.exists():
-            return list(workflows_dir.glob("*.json"))
-        return []
+        return self.config.workflow.run
 
     def _test_instantiation(
         self,

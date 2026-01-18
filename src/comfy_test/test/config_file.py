@@ -13,8 +13,15 @@ Example:
     levels = ["syntax", "install", "registration", "instantiation", "validation", "execution"]
 
     [test.workflows]
-    files = ["workflows/basic.json", "workflows/advanced.json"]
     timeout = 120
+
+    # Workflows to run end-to-end (execution level)
+    # Can be a list or "all" to auto-discover from workflows/ folder
+    run = ["workflows/basic.json"]
+
+    # Workflows to capture screenshots of
+    # Can be a list or "all" to auto-discover from workflows/ folder
+    screenshot = "all"
 """
 
 import sys
@@ -148,13 +155,13 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
         windows_portable = true
 
         [test.workflows]
-        files = ["workflows/basic.json", "workflows/advanced.json"]
         timeout = 120
+        run = ["workflows/basic.json"]
+        screenshot = ["workflows/basic.json", "workflows/advanced.json"]
 
         # Legacy format (still supported):
-        # [test.workflow]
-        # file = "tests/workflows/smoke.json"
-        # timeout = 120
+        # files = ["workflows/basic.json"]  # maps to 'run'
+        # file = "workflow.json"  # maps to 'run'
 
         [test.linux]
         skip_workflow = false
@@ -241,26 +248,47 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
 def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConfig:
     """Parse workflow configuration section.
 
-    Supports both new format with 'files' list and legacy format with 'file' string.
+    Supports:
+      - New format: run = [...] or run = "all", screenshot = [...] or screenshot = "all"
+      - Legacy format: files = [...] → maps to run
+      - Legacy format: file = "..." → maps to run
+
+    When "all" is specified, auto-discovers all *.json files in workflows/ directory.
     """
+    run = []
+    screenshot = []
     files = []
 
-    # New format: files = ["workflow1.json", "workflow2.json"]
+    # Helper to resolve "all" or list of paths
+    def resolve_workflows(value):
+        if value == "all":
+            workflows_dir = base_dir / "workflows"
+            if workflows_dir.exists():
+                return sorted(workflows_dir.glob("*.json"))
+            return []
+        return [base_dir / f for f in value]
+
+    # New format: run = [...] or "all", screenshot = [...] or "all"
+    if "run" in data:
+        run = resolve_workflows(data["run"])
+    if "screenshot" in data:
+        screenshot = resolve_workflows(data["screenshot"])
+
+    # Legacy format: files = [...] → maps to run
     if "files" in data:
         files = [base_dir / f for f in data["files"]]
 
-    # Legacy format: file = "workflow.json"
+    # Legacy format: file = "..." → maps to run
     file_path = None
     if "file" in data:
         file_path = base_dir / data["file"]
-        # If no files specified, use legacy file
-        if not files:
-            files = [file_path]
 
     return WorkflowConfig(
-        files=files,
+        run=run,
+        screenshot=screenshot,
         timeout=data.get("timeout", 120),
-        file=file_path,  # Keep for backwards compatibility
+        files=files,
+        file=file_path,
     )
 
 
