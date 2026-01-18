@@ -79,7 +79,7 @@ class WorkflowConfig:
 
     run: List[Path] = field(default_factory=list)
     screenshot: List[Path] = field(default_factory=list)
-    timeout: Optional[int] = None  # None = no timeout
+    timeout: int = 3600  # Default 60 minutes
     files: List[Path] = field(default_factory=list)  # Deprecated
     file: Optional[Path] = None  # Deprecated
 
@@ -100,7 +100,7 @@ class WorkflowConfig:
         self.screenshot = [Path(f) for f in self.screenshot]
         self.files = [Path(f) for f in self.files]
 
-        if self.timeout is not None and self.timeout <= 0:
+        if self.timeout <= 0:
             raise ValueError(f"Timeout must be positive, got {self.timeout}")
 
 

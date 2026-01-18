@@ -303,7 +303,7 @@ class TestManager:
                                 if validation_result.executable_nodes:
                                     with open(workflow_path) as f:
                                         workflow = json.load(f)
-                                    exec_result = validator.execute_prefix(workflow, api, timeout=30)
+                                    exec_result = validator.execute_prefix(workflow, api, timeout=self.config.workflow.timeout)
 
                                     if exec_result.executed_nodes:
                                         self._log(f"    Execution: {len(exec_result.executed_nodes)} nodes executed")

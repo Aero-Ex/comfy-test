@@ -454,7 +454,7 @@ class WorkflowValidator:
         self,
         workflow: Dict[str, Any],
         api: Any,  # ComfyUIAPI
-        timeout: int = 60,
+        timeout: int = 3600,
     ) -> ValidationResult:
         """Level 4: Execute the non-CUDA prefix of a workflow.
 
