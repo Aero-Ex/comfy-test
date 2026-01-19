@@ -1,0 +1,236 @@
+# LOCAL VERSION - For testing with act
+# This file has local mount overrides for comfy-test and comfy-env
+# Use test-matrix.yml for GitHub Actions CI
+
+name: ComfyUI Installation Test Matrix (Local)
+
+on:
+  workflow_call:
+    inputs:
+      node-path:
+        description: "Path to custom node directory"
+        type: string
+        default: "."
+      config-file:
+        description: "Path to comfy-test.toml config file"
+        type: string
+        default: "comfy-test.toml"
+      python-version:
+        description: "Python version for testing"
+        type: string
+        default: "3.10"
+      comfy-test-ref:
+        description: "Git ref for comfy-test (branch, tag, or SHA)"
+        type: string
+        default: "main"
+      timeout-minutes:
+        description: "Job timeout in minutes (default: 60)"
+        type: number
+        default: 60
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet &
+          sudo rm -rf /usr/local/lib/android &
+          sudo rm -rf /opt/ghc &
+          sudo rm -rf /opt/hostedtoolcache/CodeQL &
+          sudo apt-get clean &
+          wait
+
+      - name: Checkout node
+        uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        if: ${{ !env.COMFY_TEST_LOCAL }}
+        uses: actions/checkout@v4
+        with:
+          repository: PozzettiAndrea/comfy-test
+          ref: ${{ inputs.comfy-test-ref }}
+          path: .comfy-test-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install comfy-test
+        run: |
+          if [ -d "/local-comfy-test" ]; then
+            echo "Installing comfy-test from local mount: /local-comfy-test"
+            pip install /local-comfy-test
+          else
+            pip install ./.comfy-test-src
+          fi
+
+      - name: Install local comfy-env
+        run: |
+          if [ -d "/local-comfy-env" ]; then
+            echo "Installing comfy-env from local mount: /local-comfy-env"
+            pip install /local-comfy-env
+          fi
+
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform linux --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform linux --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Validation
+        id: validation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level validation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-linux
+          path: .comfy-test/
+          if-no-files-found: ignore
+
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: Checkout node
+        uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: PozzettiAndrea/comfy-test
+          ref: ${{ inputs.comfy-test-ref }}
+          path: .comfy-test-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install comfy-test
+        run: pip install ./.comfy-test-src
+
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform windows --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform windows --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Validation
+        id: validation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level validation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-windows
+          path: .comfy-test/
+          if-no-files-found: ignore
+
+  test-windows-portable:
+    runs-on: windows-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: Checkout node
+        uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: PozzettiAndrea/comfy-test
+          ref: ${{ inputs.comfy-test-ref }}
+          path: .comfy-test-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install comfy-test
+        run: pip install ./.comfy-test-src
+
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform windows-portable --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform windows-portable --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Validation
+        id: validation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level validation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-windows-portable
+          path: .comfy-test/
+          if-no-files-found: ignore

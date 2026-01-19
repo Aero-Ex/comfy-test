@@ -250,6 +250,7 @@ def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConf
 
     Supports:
       - New format: run = [...] or run = "all", screenshot = [...] or screenshot = "all"
+      - New format: execution_screenshot = [...] or "all" (execute and capture with outputs)
       - Legacy format: files = [...] → maps to run
       - Legacy format: file = "..." → maps to run
 
@@ -257,6 +258,7 @@ def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConf
     """
     run = []
     screenshot = []
+    execution_screenshot = []
     files = []
 
     # Helper to resolve "all" or list of paths
@@ -273,6 +275,8 @@ def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConf
         run = resolve_workflows(data["run"])
     if "screenshot" in data:
         screenshot = resolve_workflows(data["screenshot"])
+    if "execution_screenshot" in data:
+        execution_screenshot = resolve_workflows(data["execution_screenshot"])
 
     # Legacy format: files = [...] → maps to run
     if "files" in data:
@@ -287,6 +291,7 @@ def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConf
     kwargs = {
         "run": run,
         "screenshot": screenshot,
+        "execution_screenshot": execution_screenshot,
         "files": files,
         "file": file_path,
     }

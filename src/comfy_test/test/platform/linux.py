@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 COMFYUI_REPO = "https://github.com/comfyanonymous/ComfyUI.git"
 PYTORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
+PYTORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu128"
 
 
 class LinuxTestPlatform(TestPlatform):
@@ -71,12 +72,19 @@ class LinuxTestPlatform(TestPlatform):
         python = venv_dir / "bin" / "python"
         pip = venv_dir / "bin" / "pip"
 
-        # Install PyTorch (CPU)
-        self._log("Installing PyTorch (CPU)...")
+        # Install PyTorch (CUDA if GPU mode, otherwise CPU)
+        gpu_mode = os.environ.get("COMFY_TEST_GPU")
+        if gpu_mode:
+            self._log("Installing PyTorch (CUDA 12.8)...")
+            pytorch_index = PYTORCH_CUDA_INDEX
+        else:
+            self._log("Installing PyTorch (CPU)...")
+            pytorch_index = PYTORCH_CPU_INDEX
+
         self._run_command(
             ["uv", "pip", "install", "--python", str(python),
              "torch", "torchvision", "torchaudio",
-             "--index-url", PYTORCH_CPU_INDEX],
+             "--index-url", pytorch_index],
             cwd=work_dir,
         )
 
@@ -166,7 +174,9 @@ class LinuxTestPlatform(TestPlatform):
             "--port", str(port),
         ]
 
-        if config.cpu_only:
+        # Use CPU mode unless GPU mode is explicitly enabled
+        gpu_mode = os.environ.get("COMFY_TEST_GPU")
+        if config.cpu_only and not gpu_mode:
             cmd.append("--cpu")
 
         # Set environment

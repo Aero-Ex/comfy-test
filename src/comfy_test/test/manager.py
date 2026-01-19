@@ -1,6 +1,7 @@
 """Test manager for orchestrating installation tests."""
 
 import json
+import os
 import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -263,7 +264,13 @@ class TestManager:
 
                 # Get CUDA packages to mock from comfy-env.toml
                 cuda_packages = get_cuda_packages(self.node_dir)
-                if cuda_packages:
+                # Skip mocking if real GPU available (COMFY_TEST_GPU=1)
+                gpu_mode = os.environ.get("COMFY_TEST_GPU")
+                self._log(f"COMFY_TEST_GPU env var = {gpu_mode!r}")
+                if gpu_mode:
+                    self._log("GPU mode: using real CUDA (no mocking)")
+                    cuda_packages = []
+                elif cuda_packages:
                     self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
 
                 # Discover nodes from NODE_CLASS_MAPPINGS before starting server
@@ -356,6 +363,7 @@ class TestManager:
 
                                 # Free memory between workflows to prevent accumulation
                                 api.free_memory()
+                                self._log("\n\n")  # Blank lines between workflows
 
                             if all_errors:
                                 raise WorkflowValidationError(
@@ -392,6 +400,29 @@ class TestManager:
                             )
                             self._log(f"    Status: {result['status']}")
                         self._log_level_done(TestLevel.EXECUTION, "PASSED")
+
+                    # === EXECUTION SCREENSHOTS ===
+                    # Capture screenshots after executing workflows (shows preview outputs)
+                    if self.config.workflow.execution_screenshot:
+                        self._log("\n[EXECUTION SCREENSHOTS]")
+                        self._log("-" * 40)
+                        try:
+                            from ..screenshot import WorkflowScreenshot, check_dependencies
+                            check_dependencies()
+
+                            total_screenshots = len(self.config.workflow.execution_screenshot)
+                            self._log(f"Capturing {total_screenshots} execution screenshot(s)...")
+
+                            with WorkflowScreenshot(server.base_url, log_callback=self._log) as ws:
+                                for idx, workflow_file in enumerate(self.config.workflow.execution_screenshot, 1):
+                                    self._log(f"  [{idx}/{total_screenshots}] {workflow_file.name}")
+                                    ws.capture_after_execution(
+                                        workflow_file,
+                                        timeout=self.config.workflow.timeout,
+                                    )
+                            self._log("Execution screenshots captured successfully")
+                        except ImportError:
+                            self._log("Skipping execution screenshots (playwright not installed)")
 
             self._log(f"\n{platform_name}: PASSED")
             return TestResult(platform_name, True)
@@ -464,16 +495,11 @@ class TestManager:
         if has_requirements:
             self._log("Found requirements.txt (legacy format)")
 
-        if has_pyproject and has_requirements:
-            self._log("WARNING: Both pyproject.toml and requirements.txt exist")
-            self._log("Consider migrating fully to pyproject.toml")
-        elif not has_pyproject and not has_requirements:
+        if not has_pyproject and not has_requirements:
             raise TestError(
                 "No dependency file found",
                 "Expected pyproject.toml or requirements.txt in node directory"
             )
-        elif has_requirements and not has_pyproject:
-            self._log("WARNING: Consider migrating to pyproject.toml")
 
         # Check for problematic unicode characters in Python files
         self._check_unicode_characters()
@@ -585,7 +611,10 @@ cuda_packages = {cuda_packages_json}
 for pkg in cuda_packages:
     if pkg not in sys.modules:
         import types
-        sys.modules[pkg] = types.ModuleType(pkg)
+        import importlib.machinery
+        mock_module = types.ModuleType(pkg)
+        mock_module.__spec__ = importlib.machinery.ModuleSpec(pkg, None)
+        sys.modules[pkg] = mock_module
 
 # Import ComfyUI's folder_paths to set up paths
 import folder_paths
@@ -792,7 +821,13 @@ print(json.dumps(result))
 
                 # Discover nodes and get CUDA packages for state
                 cuda_packages = get_cuda_packages(self.node_dir)
-                if cuda_packages:
+                # Skip mocking if real GPU available (COMFY_TEST_GPU=1)
+                gpu_mode = os.environ.get("COMFY_TEST_GPU")
+                self._log(f"COMFY_TEST_GPU env var = {gpu_mode!r}")
+                if gpu_mode:
+                    self._log("GPU mode: using real CUDA (no mocking)")
+                    cuda_packages = []
+                elif cuda_packages:
                     self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
 
                 expected_nodes = discover_nodes_subprocess(
@@ -834,6 +869,13 @@ print(json.dumps(result))
 
             # Load state from previous install
             state = load_state(work_dir)
+
+            # Skip mocking if real GPU available (COMFY_TEST_GPU=1)
+            gpu_mode = os.environ.get("COMFY_TEST_GPU")
+            self._log(f"COMFY_TEST_GPU env var = {gpu_mode!r}")
+            if gpu_mode:
+                self._log("GPU mode: using real CUDA (no mocking)")
+                state.cuda_packages = []
 
             # Reconstruct paths from state
             paths = TestPaths(

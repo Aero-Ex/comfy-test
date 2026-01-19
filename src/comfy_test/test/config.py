@@ -71,7 +71,9 @@ class WorkflowConfig:
 
     Args:
         run: Workflows to execute end-to-end
-        screenshot: Workflows to capture screenshots of
+        screenshot: Workflows to capture screenshots of (static graph only)
+        execution_screenshot: Workflows to execute and then capture screenshots of
+                             (shows preview outputs with actual rendered content)
         timeout: Timeout in seconds for workflow execution (None = no timeout)
         files: Deprecated - use run instead
         file: Deprecated - use run instead
@@ -79,6 +81,7 @@ class WorkflowConfig:
 
     run: List[Path] = field(default_factory=list)
     screenshot: List[Path] = field(default_factory=list)
+    execution_screenshot: List[Path] = field(default_factory=list)
     timeout: int = 3600  # Default 60 minutes
     files: List[Path] = field(default_factory=list)  # Deprecated
     file: Optional[Path] = None  # Deprecated
@@ -98,6 +101,7 @@ class WorkflowConfig:
         # Normalize to Path objects
         self.run = [Path(f) for f in self.run]
         self.screenshot = [Path(f) for f in self.screenshot]
+        self.execution_screenshot = [Path(f) for f in self.execution_screenshot]
         self.files = [Path(f) for f in self.files]
 
         if self.timeout <= 0:

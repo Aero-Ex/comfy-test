@@ -211,6 +211,180 @@ class WorkflowScreenshot:
         self._log(f"  Saved: {output_path}")
         return output_path
 
+    def capture_after_execution(
+        self,
+        workflow_path: Path,
+        output_path: Optional[Path] = None,
+        timeout: int = 300,
+        wait_after_completion_ms: int = 3000,
+    ) -> Path:
+        """Capture a screenshot after executing a workflow.
+
+        Unlike capture(), this method actually executes the workflow and waits
+        for it to complete before taking a screenshot. This shows the preview
+        nodes with their actual rendered outputs (images, meshes, etc.).
+
+        Args:
+            workflow_path: Path to the workflow JSON file
+            output_path: Path to save the PNG (default: workflow with _executed.png suffix)
+            timeout: Max seconds to wait for execution to complete (default: 300)
+            wait_after_completion_ms: Time to wait after completion for previews to render (default: 3000ms)
+
+        Returns:
+            Path to the saved screenshot
+
+        Raises:
+            ScreenshotError: If capture or execution fails
+        """
+        if self._page is None:
+            raise ScreenshotError("Browser not started. Call start() or use context manager.")
+
+        # Determine output path - use _executed suffix to distinguish from static screenshots
+        if output_path is None:
+            output_path = workflow_path.with_stem(workflow_path.stem + "_executed").with_suffix(".png")
+
+        # Load workflow JSON
+        try:
+            with open(workflow_path) as f:
+                workflow = json.load(f)
+        except Exception as e:
+            raise ScreenshotError(f"Failed to load workflow: {workflow_path}", str(e))
+
+        self._log(f"Executing and capturing: {workflow_path.name}")
+
+        # Navigate to ComfyUI
+        try:
+            self._page.goto(self.server_url, wait_until="networkidle")
+        except Exception as e:
+            raise ScreenshotError(f"Failed to connect to ComfyUI at {self.server_url}", str(e))
+
+        # Wait for app to initialize
+        try:
+            self._page.wait_for_function(
+                "typeof window.app !== 'undefined' && window.app.graph !== undefined",
+                timeout=30000,
+            )
+        except Exception as e:
+            raise ScreenshotError("ComfyUI app did not initialize", str(e))
+
+        # Load the workflow via JavaScript
+        workflow_json = json.dumps(workflow)
+        try:
+            self._page.evaluate(f"""
+                (async () => {{
+                    const workflow = {workflow_json};
+                    await window.app.loadGraphData(workflow);
+                }})();
+            """)
+        except Exception as e:
+            raise ScreenshotError("Failed to load workflow into ComfyUI", str(e))
+
+        # Wait for graph to render before execution
+        self._page.wait_for_timeout(2000)
+
+        # Queue the workflow for execution and get the prompt_id
+        self._log("  Queuing workflow for execution...")
+        try:
+            prompt_id = self._page.evaluate("""
+                (async () => {
+                    const result = await window.app.queuePrompt(0);
+                    return result.prompt_id;
+                })();
+            """)
+        except Exception as e:
+            raise ScreenshotError("Failed to queue workflow for execution", str(e))
+
+        if not prompt_id:
+            raise ScreenshotError("No prompt_id returned from queuePrompt")
+
+        self._log(f"  Prompt ID: {prompt_id}")
+
+        # Poll the history API for completion
+        self._log("  Waiting for execution to complete...")
+        try:
+            # Poll history endpoint until status is success or error
+            result = self._page.evaluate(f"""
+                async () => {{
+                    const timeout = {timeout * 1000};
+                    const startTime = Date.now();
+                    const promptId = "{prompt_id}";
+
+                    while (Date.now() - startTime < timeout) {{
+                        try {{
+                            const resp = await fetch('/history/' + promptId);
+                            const data = await resp.json();
+                            const history = data[promptId];
+
+                            if (history) {{
+                                const status = history.status?.status_str;
+                                if (status === 'success') {{
+                                    return {{ success: true, status: 'success' }};
+                                }}
+                                if (status === 'error') {{
+                                    const errorMsg = history.status?.messages?.[0]?.[1] || 'Unknown error';
+                                    return {{ success: false, status: 'error', error: errorMsg }};
+                                }}
+                            }}
+                        }} catch (e) {{
+                            // Ignore fetch errors, keep polling
+                        }}
+
+                        // Wait 1 second before next poll
+                        await new Promise(r => setTimeout(r, 1000));
+                    }}
+
+                    return {{ success: false, status: 'timeout', error: 'Execution timed out' }};
+                }}
+            """)
+        except Exception as e:
+            raise ScreenshotError("Error while waiting for execution", str(e))
+
+        if not result.get("success"):
+            status = result.get("status", "unknown")
+            error = result.get("error", "Unknown error")
+            raise ScreenshotError(f"Workflow execution failed: {status}", error)
+
+        self._log("  Execution completed successfully")
+
+        # Wait for preview nodes to render their outputs
+        self._log(f"  Waiting {wait_after_completion_ms}ms for previews to render...")
+        self._page.wait_for_timeout(wait_after_completion_ms)
+
+        # Fit the graph to view
+        try:
+            self._page.evaluate("""
+                if (window.app && window.app.canvas) {
+                    window.app.canvas.ds.reset();
+                    window.app.graph.setDirtyCanvas(true, true);
+                }
+            """)
+            self._page.wait_for_timeout(500)
+        except Exception:
+            pass  # Best effort
+
+        # Take screenshot with a temp file first
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+
+        try:
+            # Try to screenshot just the canvas, fall back to full page
+            canvas = self._page.locator("canvas").first
+            if canvas.is_visible():
+                canvas.screenshot(path=str(tmp_path))
+            else:
+                self._page.screenshot(path=str(tmp_path))
+
+            # Embed workflow metadata into PNG
+            self._embed_workflow(tmp_path, output_path, workflow)
+
+        finally:
+            # Clean up temp file
+            if tmp_path.exists():
+                tmp_path.unlink()
+
+        self._log(f"  Saved: {output_path}")
+        return output_path
+
     def _embed_workflow(
         self,
         source_path: Path,

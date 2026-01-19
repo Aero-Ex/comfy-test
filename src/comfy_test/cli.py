@@ -167,6 +167,12 @@ def cmd_info(args) -> int:
                 print(f"    - {wf}")
         else:
             print("  Screenshot: none configured")
+        if config.workflow.execution_screenshot:
+            print(f"  Execution Screenshot: {len(config.workflow.execution_screenshot)} workflow(s)")
+            for wf in config.workflow.execution_screenshot:
+                print(f"    - {wf}")
+        else:
+            print("  Execution Screenshot: none configured")
 
         return 0
 
@@ -295,7 +301,11 @@ def cmd_screenshot(args) -> int:
         # Filter workflows that need updating (unless --force)
         def get_output_path(wf: Path) -> Path:
             if output_dir:
+                if args.execute:
+                    return output_dir / wf.with_stem(wf.stem + "_executed").with_suffix(".png").name
                 return output_dir / wf.with_suffix(".png").name
+            if args.execute:
+                return wf.with_stem(wf.stem + "_executed").with_suffix(".png")
             return wf.with_suffix(".png")
 
         if args.force:
@@ -366,7 +376,12 @@ def cmd_screenshot(args) -> int:
                 for wf in workflows_to_capture:
                     out_path = get_output_path(wf)
                     try:
-                        result = ws.capture(wf, out_path)
+                        if args.execute:
+                            result = ws.capture_after_execution(
+                                wf, out_path, timeout=args.timeout
+                            )
+                        else:
+                            result = ws.capture(wf, out_path)
                         cache.save_fingerprint(wf, out_path)
                         results.append(result)
                     except ScreenshotError as e:
@@ -411,7 +426,12 @@ def cmd_screenshot(args) -> int:
                         for wf in workflows_to_capture:
                             out_path = get_output_path(wf)
                             try:
-                                result = ws.capture(wf, out_path)
+                                if args.execute:
+                                    result = ws.capture_after_execution(
+                                        wf, out_path, timeout=args.timeout
+                                    )
+                                else:
+                                    result = ws.capture(wf, out_path)
                                 cache.save_fingerprint(wf, out_path)
                                 results.append(result)
                             except ScreenshotError as e:
@@ -575,6 +595,17 @@ def main(args=None) -> int:
         "--force", "-f",
         action="store_true",
         help="Force regeneration, ignoring cache",
+    )
+    screenshot_parser.add_argument(
+        "--execute", "-e",
+        action="store_true",
+        help="Execute workflows before capturing (shows preview outputs)",
+    )
+    screenshot_parser.add_argument(
+        "--timeout", "-t",
+        type=int,
+        default=300,
+        help="Execution timeout in seconds (default: 300, only used with --execute)",
     )
     screenshot_parser.set_defaults(func=cmd_screenshot)
 
