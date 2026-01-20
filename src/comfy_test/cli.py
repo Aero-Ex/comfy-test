@@ -15,6 +15,18 @@ from .errors import TestError, ConfigError, SetupError
 
 def cmd_run(args) -> int:
     """Run installation tests."""
+    # Handle --local mode (run via act/Docker)
+    if args.local:
+        from .local_runner import run_local
+        output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / ".comfy-test-output"
+        return run_local(
+            node_dir=Path.cwd(),
+            output_dir=output_dir,
+            config_file=args.config or "comfy-test.toml",
+            gpu=args.gpu,
+            log_callback=print,
+        )
+
     try:
         # Load config
         if args.config:

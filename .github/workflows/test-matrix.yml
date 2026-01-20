@@ -106,10 +106,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: screenshots-linux
-          path: |
-            ${{ inputs.node-path }}/workflows/*.png
-            ${{ inputs.node-path }}/workflows/**/*.png
+          path: .comfy-test/screenshots/
           if-no-files-found: ignore
+
+      - name: Publish to gh-pages
+        if: always() && steps.execution.outcome == 'success'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: .comfy-test
+          keep_files: true
+          exclude_assets: ''
 
   test-windows:
     runs-on: windows-latest

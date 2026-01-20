@@ -3,7 +3,9 @@
 import json
 import os
 import tempfile
+import time
 from dataclasses import dataclass, asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable, List
 
@@ -417,36 +419,88 @@ class TestManager:
                                 self._log("WARNING: Screenshots disabled (playwright not installed)")
                                 screenshot_set = set()  # Disable screenshots
 
+                        # Initialize results tracking
+                        results = []
+                        logs_dir = self.node_dir / ".comfy-test" / "logs"
+                        logs_dir.mkdir(parents=True, exist_ok=True)
+
                         try:
                             runner = WorkflowRunner(api, self._log)
                             all_errors = []
                             for idx, workflow_file in enumerate(self.config.workflow.run, 1):
+                                workflow_log = []
+                                start_time = time.time()
+                                status = "pass"
+                                error_msg = None
+
                                 try:
                                     if workflow_file in screenshot_set and ws:
                                         # Execute via browser + capture screenshot
-                                        self._log(f"  [{idx}/{total_workflows}] RUNNING + SCREENSHOT {workflow_file.name}")
+                                        log_msg = f"  [{idx}/{total_workflows}] RUNNING + SCREENSHOT {workflow_file.name}"
+                                        self._log(log_msg)
+                                        workflow_log.append(log_msg)
                                         output_path = screenshots_dir / f"{workflow_file.stem}_executed.png"
                                         ws.capture_after_execution(
                                             workflow_file,
                                             output_path=output_path,
                                             timeout=self.config.workflow.timeout,
                                         )
-                                        self._log(f"    Status: success")
+                                        log_msg = f"    Status: success"
+                                        self._log(log_msg)
+                                        workflow_log.append(log_msg)
                                     else:
                                         # Execute via API only (faster)
-                                        self._log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
+                                        log_msg = f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}"
+                                        self._log(log_msg)
+                                        workflow_log.append(log_msg)
                                         result = runner.run_workflow(
                                             workflow_file,
                                             timeout=self.config.workflow.timeout,
                                         )
-                                        self._log(f"    Status: {result['status']}")
+                                        log_msg = f"    Status: {result['status']}"
+                                        self._log(log_msg)
+                                        workflow_log.append(log_msg)
                                 except (WorkflowError, TimeoutError, ScreenshotError) as e:
-                                    self._log(f"    Status: FAILED")
-                                    self._log(f"    Error: {e.message}")
+                                    status = "fail"
+                                    error_msg = str(e.message)
+                                    log_msg = f"    Status: FAILED"
+                                    self._log(log_msg)
+                                    workflow_log.append(log_msg)
+                                    log_msg = f"    Error: {e.message}"
+                                    self._log(log_msg)
+                                    workflow_log.append(log_msg)
                                     all_errors.append((workflow_file.name, str(e.message)))
+
+                                duration = time.time() - start_time
+                                results.append({
+                                    "name": workflow_file.stem,
+                                    "status": status,
+                                    "duration_seconds": round(duration, 2),
+                                    "error": error_msg
+                                })
+
+                                # Save per-workflow log
+                                (logs_dir / f"{workflow_file.stem}.log").write_text("\n".join(workflow_log))
                         finally:
                             if ws:
                                 ws.stop()
+
+                        # Save results.json
+                        passed_count = sum(1 for r in results if r["status"] == "pass")
+                        failed_count = sum(1 for r in results if r["status"] == "fail")
+                        results_data = {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "platform": platform_name,
+                            "summary": {
+                                "total": len(results),
+                                "passed": passed_count,
+                                "failed": failed_count
+                            },
+                            "workflows": results
+                        }
+                        results_file = self.node_dir / ".comfy-test" / "results.json"
+                        results_file.write_text(json.dumps(results_data, indent=2))
+                        self._log(f"  Results saved to {results_file}")
 
                         if all_errors:
                             raise WorkflowExecutionError(
@@ -1031,36 +1085,88 @@ print(json.dumps(result))
                                 self._log("WARNING: Screenshots disabled (playwright not installed)")
                                 screenshot_set = set()  # Disable screenshots
 
+                        # Initialize results tracking
+                        results = []
+                        logs_dir = self.node_dir / ".comfy-test" / "logs"
+                        logs_dir.mkdir(parents=True, exist_ok=True)
+
                         try:
                             runner = WorkflowRunner(api, self._log)
                             all_errors = []
                             for idx, workflow_file in enumerate(self.config.workflow.run, 1):
+                                workflow_log = []
+                                start_time = time.time()
+                                status = "pass"
+                                error_msg = None
+
                                 try:
                                     if workflow_file in screenshot_set and ws:
                                         # Execute via browser + capture screenshot
-                                        self._log(f"  [{idx}/{total_workflows}] RUNNING + SCREENSHOT {workflow_file.name}")
+                                        log_msg = f"  [{idx}/{total_workflows}] RUNNING + SCREENSHOT {workflow_file.name}"
+                                        self._log(log_msg)
+                                        workflow_log.append(log_msg)
                                         output_path = screenshots_dir / f"{workflow_file.stem}_executed.png"
                                         ws.capture_after_execution(
                                             workflow_file,
                                             output_path=output_path,
                                             timeout=self.config.workflow.timeout,
                                         )
-                                        self._log(f"    Status: success")
+                                        log_msg = f"    Status: success"
+                                        self._log(log_msg)
+                                        workflow_log.append(log_msg)
                                     else:
                                         # Execute via API only (faster)
-                                        self._log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
+                                        log_msg = f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}"
+                                        self._log(log_msg)
+                                        workflow_log.append(log_msg)
                                         result = runner.run_workflow(
                                             workflow_file,
                                             timeout=self.config.workflow.timeout,
                                         )
-                                        self._log(f"    Status: {result['status']}")
+                                        log_msg = f"    Status: {result['status']}"
+                                        self._log(log_msg)
+                                        workflow_log.append(log_msg)
                                 except (WorkflowError, TimeoutError, ScreenshotError) as e:
-                                    self._log(f"    Status: FAILED")
-                                    self._log(f"    Error: {e.message}")
+                                    status = "fail"
+                                    error_msg = str(e.message)
+                                    log_msg = f"    Status: FAILED"
+                                    self._log(log_msg)
+                                    workflow_log.append(log_msg)
+                                    log_msg = f"    Error: {e.message}"
+                                    self._log(log_msg)
+                                    workflow_log.append(log_msg)
                                     all_errors.append((workflow_file.name, str(e.message)))
+
+                                duration = time.time() - start_time
+                                results.append({
+                                    "name": workflow_file.stem,
+                                    "status": status,
+                                    "duration_seconds": round(duration, 2),
+                                    "error": error_msg
+                                })
+
+                                # Save per-workflow log
+                                (logs_dir / f"{workflow_file.stem}.log").write_text("\n".join(workflow_log))
                         finally:
                             if ws:
                                 ws.stop()
+
+                        # Save results.json
+                        passed_count = sum(1 for r in results if r["status"] == "pass")
+                        failed_count = sum(1 for r in results if r["status"] == "fail")
+                        results_data = {
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "platform": platform_name,
+                            "summary": {
+                                "total": len(results),
+                                "passed": passed_count,
+                                "failed": failed_count
+                            },
+                            "workflows": results
+                        }
+                        results_file = self.node_dir / ".comfy-test" / "results.json"
+                        results_file.write_text(json.dumps(results_data, indent=2))
+                        self._log(f"  Results saved to {results_file}")
 
                         if all_errors:
                             raise WorkflowExecutionError(
