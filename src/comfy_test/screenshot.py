@@ -1,6 +1,8 @@
 """Workflow screenshot capture using headless browser."""
 
 import json
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
@@ -45,6 +47,88 @@ def check_dependencies() -> None:
             "Pillow is required for screenshots. "
             "Install it with: pip install comfy-test[screenshot]"
         )
+
+
+def ensure_dependencies(
+    python_path: Optional[Path] = None,
+    log_callback: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """Ensure screenshot dependencies are installed, installing if needed.
+
+    Automatically installs playwright and pillow if they are not available,
+    then downloads the chromium browser for playwright.
+
+    Args:
+        python_path: Path to Python interpreter to install into.
+                     If None, uses current interpreter.
+        log_callback: Optional callback for logging messages.
+
+    Returns:
+        True if dependencies are available (or were successfully installed),
+        False if installation failed.
+    """
+    global PLAYWRIGHT_AVAILABLE, PIL_AVAILABLE
+    global sync_playwright, Page, Browser, Image, PngImagePlugin
+
+    log = log_callback or (lambda msg: print(msg))
+
+    # Check if already available
+    if PLAYWRIGHT_AVAILABLE and PIL_AVAILABLE:
+        return True
+
+    log("Installing screenshot dependencies (playwright, pillow)...")
+
+    python = str(python_path) if python_path else sys.executable
+
+    try:
+        # Install playwright and pillow
+        result = subprocess.run(
+            [python, "-m", "pip", "install", "playwright", "pillow"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            log(f"  Failed to install packages: {result.stderr}")
+            return False
+
+        log("  Packages installed, downloading chromium browser...")
+
+        # Install chromium browser (required for playwright to work)
+        result = subprocess.run(
+            [python, "-m", "playwright", "install", "chromium"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            log(f"  Failed to install chromium: {result.stderr}")
+            return False
+
+        log("  Screenshot dependencies installed successfully")
+
+        # If we installed to a different Python environment, we can't verify
+        # via import in the current process - just trust the subprocess succeeded
+        if python_path:
+            return True
+
+        # Update availability flags and import globals (only for current env)
+        # We need to set the global names so WorkflowScreenshot can use them
+        try:
+            from playwright.sync_api import sync_playwright, Page, Browser
+            PLAYWRIGHT_AVAILABLE = True
+        except ImportError:
+            pass
+
+        try:
+            from PIL import Image, PngImagePlugin
+            PIL_AVAILABLE = True
+        except ImportError:
+            pass
+
+        return PLAYWRIGHT_AVAILABLE and PIL_AVAILABLE
+
+    except Exception as e:
+        log(f"  Error installing dependencies: {e}")
+        return False
 
 
 class WorkflowScreenshot:
@@ -283,19 +367,42 @@ class WorkflowScreenshot:
         self._page.wait_for_timeout(2000)
 
         # Queue the workflow for execution and get the prompt_id
+        # We call the /prompt API directly rather than using window.app.queuePrompt
+        # because the frontend method may not return the prompt_id consistently
         self._log("  Queuing workflow for execution...")
         try:
-            prompt_id = self._page.evaluate("""
+            result = self._page.evaluate("""
                 (async () => {
-                    const result = await window.app.queuePrompt(0);
-                    return result.prompt_id;
+                    // Get the workflow in API format from the graph
+                    const prompt = await window.app.graphToPrompt();
+
+                    // Queue via API directly
+                    const resp = await fetch('/prompt', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: prompt.output })
+                    });
+
+                    if (!resp.ok) {
+                        const text = await resp.text();
+                        return { error: `HTTP ${resp.status}: ${text}` };
+                    }
+
+                    return await resp.json();
                 })();
             """)
         except Exception as e:
             raise ScreenshotError("Failed to queue workflow for execution", str(e))
 
+        if not result:
+            raise ScreenshotError("No response from /prompt API")
+
+        if "error" in result:
+            raise ScreenshotError("Failed to queue prompt", result["error"])
+
+        prompt_id = result.get("prompt_id")
         if not prompt_id:
-            raise ScreenshotError("No prompt_id returned from queuePrompt")
+            raise ScreenshotError("No prompt_id in response", f"Got: {result}")
 
         self._log(f"  Prompt ID: {prompt_id}")
 

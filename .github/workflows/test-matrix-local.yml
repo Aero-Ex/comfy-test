@@ -65,10 +65,15 @@ jobs:
         run: |
           if [ -d "/local-comfy-test" ]; then
             echo "Installing comfy-test from local mount: /local-comfy-test"
-            pip install /local-comfy-test
+            pip install "/local-comfy-test[screenshot]"
           else
-            pip install ./.comfy-test-src
+            pip install "./.comfy-test-src[screenshot]"
           fi
+
+      - name: Install Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: Install local comfy-env
         run: |

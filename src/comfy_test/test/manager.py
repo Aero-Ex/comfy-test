@@ -390,39 +390,52 @@ class TestManager:
                     else:
                         self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
                         total_workflows = len(self.config.workflow.run)
-                        self._log(f"Running {total_workflows} workflow(s)...")
-                        runner = WorkflowRunner(api, self._log)
-                        for idx, workflow_file in enumerate(self.config.workflow.run, 1):
-                            self._log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
-                            result = runner.run_workflow(
-                                workflow_file,
-                                timeout=self.config.workflow.timeout,
-                            )
-                            self._log(f"    Status: {result['status']}")
-                        self._log_level_done(TestLevel.EXECUTION, "PASSED")
 
-                    # === EXECUTION SCREENSHOTS ===
-                    # Capture screenshots after executing workflows (shows preview outputs)
-                    if self.config.workflow.execution_screenshot:
-                        self._log("\n[EXECUTION SCREENSHOTS]")
-                        self._log("-" * 40)
+                        # Determine which workflows need screenshots (smart execution mode)
+                        screenshot_set = set(self.config.workflow.execution_screenshot or [])
+                        screenshot_count = len([w for w in self.config.workflow.run if w in screenshot_set])
+
+                        if screenshot_count:
+                            self._log(f"Running {total_workflows} workflow(s) ({screenshot_count} with screenshots)...")
+                        else:
+                            self._log(f"Running {total_workflows} workflow(s)...")
+
+                        # Initialize browser only if any workflow needs screenshots
+                        ws = None
+                        if screenshot_set:
+                            try:
+                                from ..screenshot import WorkflowScreenshot, check_dependencies
+                                check_dependencies()
+                                ws = WorkflowScreenshot(server.base_url, log_callback=self._log)
+                                ws.start()
+                            except ImportError:
+                                self._log("WARNING: Screenshots disabled (playwright not installed)")
+                                screenshot_set = set()  # Disable screenshots
+
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies
-                            check_dependencies()
-
-                            total_screenshots = len(self.config.workflow.execution_screenshot)
-                            self._log(f"Capturing {total_screenshots} execution screenshot(s)...")
-
-                            with WorkflowScreenshot(server.base_url, log_callback=self._log) as ws:
-                                for idx, workflow_file in enumerate(self.config.workflow.execution_screenshot, 1):
-                                    self._log(f"  [{idx}/{total_screenshots}] {workflow_file.name}")
+                            runner = WorkflowRunner(api, self._log)
+                            for idx, workflow_file in enumerate(self.config.workflow.run, 1):
+                                if workflow_file in screenshot_set and ws:
+                                    # Execute via browser + capture screenshot
+                                    self._log(f"  [{idx}/{total_workflows}] RUNNING + SCREENSHOT {workflow_file.name}")
                                     ws.capture_after_execution(
                                         workflow_file,
                                         timeout=self.config.workflow.timeout,
                                     )
-                            self._log("Execution screenshots captured successfully")
-                        except ImportError:
-                            self._log("Skipping execution screenshots (playwright not installed)")
+                                    self._log(f"    Status: success")
+                                else:
+                                    # Execute via API only (faster)
+                                    self._log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
+                                    result = runner.run_workflow(
+                                        workflow_file,
+                                        timeout=self.config.workflow.timeout,
+                                    )
+                                    self._log(f"    Status: {result['status']}")
+                        finally:
+                            if ws:
+                                ws.stop()
+
+                        self._log_level_done(TestLevel.EXECUTION, "PASSED")
 
             self._log(f"\n{platform_name}: PASSED")
             return TestResult(platform_name, True)
@@ -974,38 +987,50 @@ print(json.dumps(result))
                         self._log("Skipped per platform config")
                     else:
                         total_workflows = len(self.config.workflow.run)
-                        self._log(f"Running {total_workflows} workflow(s)...")
-                        runner = WorkflowRunner(api, self._log)
-                        for idx, workflow_file in enumerate(self.config.workflow.run, 1):
-                            self._log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
-                            result = runner.run_workflow(
-                                workflow_file,
-                                timeout=self.config.workflow.timeout,
-                            )
-                            self._log(f"    Status: {result['status']}")
 
-                    # === EXECUTION SCREENSHOTS ===
-                    # Capture screenshots after executing workflows (shows preview outputs)
-                    if self.config.workflow.execution_screenshot:
-                        self._log("\n[EXECUTION SCREENSHOTS]")
-                        self._log("-" * 40)
+                        # Determine which workflows need screenshots (smart execution mode)
+                        screenshot_set = set(self.config.workflow.execution_screenshot or [])
+                        screenshot_count = len([w for w in self.config.workflow.run if w in screenshot_set])
+
+                        if screenshot_count:
+                            self._log(f"Running {total_workflows} workflow(s) ({screenshot_count} with screenshots)...")
+                        else:
+                            self._log(f"Running {total_workflows} workflow(s)...")
+
+                        # Initialize browser only if any workflow needs screenshots
+                        ws = None
+                        if screenshot_set:
+                            try:
+                                from ..screenshot import WorkflowScreenshot, check_dependencies
+                                check_dependencies()
+                                ws = WorkflowScreenshot(server.base_url, log_callback=self._log)
+                                ws.start()
+                            except ImportError:
+                                self._log("WARNING: Screenshots disabled (playwright not installed)")
+                                screenshot_set = set()  # Disable screenshots
+
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies
-                            check_dependencies()
-
-                            total_screenshots = len(self.config.workflow.execution_screenshot)
-                            self._log(f"Capturing {total_screenshots} execution screenshot(s)...")
-
-                            with WorkflowScreenshot(server.base_url, log_callback=self._log) as ws:
-                                for idx, workflow_file in enumerate(self.config.workflow.execution_screenshot, 1):
-                                    self._log(f"  [{idx}/{total_screenshots}] {workflow_file.name}")
+                            runner = WorkflowRunner(api, self._log)
+                            for idx, workflow_file in enumerate(self.config.workflow.run, 1):
+                                if workflow_file in screenshot_set and ws:
+                                    # Execute via browser + capture screenshot
+                                    self._log(f"  [{idx}/{total_workflows}] RUNNING + SCREENSHOT {workflow_file.name}")
                                     ws.capture_after_execution(
                                         workflow_file,
                                         timeout=self.config.workflow.timeout,
                                     )
-                            self._log("Execution screenshots captured successfully")
-                        except ImportError:
-                            self._log("Skipping execution screenshots (playwright not installed)")
+                                    self._log(f"    Status: success")
+                                else:
+                                    # Execute via API only (faster)
+                                    self._log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
+                                    result = runner.run_workflow(
+                                        workflow_file,
+                                        timeout=self.config.workflow.timeout,
+                                    )
+                                    self._log(f"    Status: {result['status']}")
+                        finally:
+                            if ws:
+                                ws.stop()
 
             self._log(f"[{level.value.upper()}] PASSED")
             return TestResult(platform_name, True)

@@ -60,7 +60,9 @@ jobs:
         run: pip install "./.comfy-test-src[screenshot]"
 
       - name: Install Playwright
-        run: playwright install chromium
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: Syntax
         id: syntax
@@ -135,7 +137,9 @@ jobs:
         run: pip install "./.comfy-test-src[screenshot]"
 
       - name: Install Playwright
-        run: playwright install chromium
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: Syntax
         id: syntax
@@ -207,7 +211,9 @@ jobs:
         run: pip install "./.comfy-test-src[screenshot]"
 
       - name: Install Playwright
-        run: playwright install chromium
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: Syntax
         id: syntax
