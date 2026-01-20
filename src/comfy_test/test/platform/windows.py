@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
@@ -17,7 +18,10 @@ PYTORCH_CPU_INDEX = "https://download.pytorch.org/whl/cpu"
 
 
 class WindowsTestPlatform(TestPlatform):
-    """Windows platform implementation for ComfyUI testing (venv-based)."""
+    """Windows platform implementation for ComfyUI testing.
+
+    Uses system Python directly (no venv) for simpler, faster tests.
+    """
 
     @property
     def name(self) -> str:
@@ -32,15 +36,13 @@ class WindowsTestPlatform(TestPlatform):
         Set up ComfyUI for testing on Windows.
 
         1. Clone ComfyUI from GitHub
-        2. Create venv with uv
-        3. Install requirements
-        4. Install PyTorch (CPU)
+        2. Install requirements to system Python
+        3. Install PyTorch (CPU)
         """
         work_dir = Path(work_dir).resolve()
         work_dir.mkdir(parents=True, exist_ok=True)
 
         comfyui_dir = work_dir / "ComfyUI"
-        venv_dir = work_dir / "venv"
 
         # Clone ComfyUI
         self._log(f"Cloning ComfyUI ({config.comfyui_version})...")
@@ -54,27 +56,17 @@ class WindowsTestPlatform(TestPlatform):
 
         self._run_command(clone_args, cwd=work_dir)
 
-        # Create custom_nodes directory (git doesn't track empty directories)
+        # Create custom_nodes directory
         custom_nodes_dir = comfyui_dir / "custom_nodes"
         custom_nodes_dir.mkdir(exist_ok=True)
 
-        # Create venv with uv
-        self._log(f"Creating venv (Python {config.python_version})...")
-        if venv_dir.exists():
-            shutil.rmtree(venv_dir)
-
-        self._run_command(
-            ["uv", "venv", str(venv_dir), "--python", config.python_version],
-            cwd=work_dir,
-        )
-
-        python = venv_dir / "Scripts" / "python.exe"
-        pip = venv_dir / "Scripts" / "pip.exe"
+        # Use system Python
+        python = Path(sys.executable)
 
         # Install PyTorch (CPU)
         self._log("Installing PyTorch (CPU)...")
         self._run_command(
-            ["uv", "pip", "install", "--python", str(python),
+            ["uv", "pip", "install", "--system",
              "torch==2.8.0", "torchvision", "torchaudio",
              "--index-url", PYTORCH_CPU_INDEX],
             cwd=work_dir,
@@ -85,7 +77,7 @@ class WindowsTestPlatform(TestPlatform):
         requirements_file = comfyui_dir / "requirements.txt"
         if requirements_file.exists():
             self._run_command(
-                ["uv", "pip", "install", "--python", str(python),
+                ["uv", "pip", "install", "--system",
                  "-r", str(requirements_file)],
                 cwd=work_dir,
             )
@@ -95,7 +87,6 @@ class WindowsTestPlatform(TestPlatform):
             comfyui_dir=comfyui_dir,
             python=python,
             custom_nodes_dir=custom_nodes_dir,
-            venv_dir=venv_dir,
         )
 
     def install_node(self, paths: TestPaths, node_dir: Path) -> None:
@@ -105,15 +96,15 @@ class WindowsTestPlatform(TestPlatform):
         On Windows, we copy instead of symlink to avoid permission issues.
 
         1. Copy to custom_nodes/
-        2. Run install.py if present
-        3. Install requirements.txt if present
+        2. Install requirements.txt if present
+        3. Run install.py if present
         """
         node_dir = Path(node_dir).resolve()
         node_name = node_dir.name
 
         target_dir = paths.custom_nodes_dir / node_name
 
-        # Copy node directory (ignore work_dir and common non-source dirs to avoid recursion)
+        # Copy node directory
         self._log(f"Copying {node_name} to custom_nodes/...")
         if target_dir.exists():
             shutil.rmtree(target_dir)
@@ -121,10 +112,8 @@ class WindowsTestPlatform(TestPlatform):
         def ignore_patterns(directory, files):
             ignored = set()
             for f in files:
-                # Ignore common non-source directories
                 if f in {'.git', '__pycache__', '.venv', 'venv', 'node_modules', '.comfy-test-env'}:
                     ignored.add(f)
-                # Ignore if this is the work_dir (prevents infinite recursion)
                 if (Path(directory) / f).resolve() == paths.work_dir.resolve():
                     ignored.add(f)
             return ignored
@@ -136,7 +125,7 @@ class WindowsTestPlatform(TestPlatform):
         if requirements_file.exists():
             self._log("Installing node requirements...")
             self._run_command(
-                ["uv", "pip", "install", "--python", str(paths.python),
+                ["uv", "pip", "install", "--system",
                  "-r", str(requirements_file)],
                 cwd=target_dir,
             )
@@ -145,7 +134,6 @@ class WindowsTestPlatform(TestPlatform):
         install_py = target_dir / "install.py"
         if install_py.exists():
             self._log("Running install.py...")
-            # Set CUDA version for CPU-only CI (comfy-env will use this if no GPU detected)
             install_env = {"COMFY_ENV_CUDA_VERSION": "12.8"}
             self._run_command(
                 [str(paths.python), str(install_py)],
@@ -175,9 +163,6 @@ class WindowsTestPlatform(TestPlatform):
 
         # Set environment
         env = os.environ.copy()
-        if paths.venv_dir:
-            env["VIRTUAL_ENV"] = str(paths.venv_dir)
-            env["PATH"] = f"{paths.venv_dir}\\Scripts;{env.get('PATH', '')}"
         if extra_env:
             env.update(extra_env)
 
@@ -197,7 +182,6 @@ class WindowsTestPlatform(TestPlatform):
         self._log(f"Cleaning up {paths.work_dir}...")
 
         if paths.work_dir.exists():
-            # Windows sometimes has file locking issues
             try:
                 shutil.rmtree(paths.work_dir)
             except PermissionError:
@@ -231,7 +215,7 @@ class WindowsTestPlatform(TestPlatform):
         if requirements_file.exists():
             self._log(f"  Installing {name} requirements...")
             self._run_command(
-                ["uv", "pip", "install", "--python", str(paths.python),
+                ["uv", "pip", "install", "--system",
                  "-r", str(requirements_file)],
                 cwd=target_dir,
             )

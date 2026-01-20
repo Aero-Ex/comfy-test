@@ -107,7 +107,6 @@ class WindowsPortableTestPlatform(TestPlatform):
             comfyui_dir=comfyui_dir,
             python=python,
             custom_nodes_dir=custom_nodes_dir,
-            venv_dir=None,  # Portable doesn't use venv
         )
 
     def install_node(self, paths: TestPaths, node_dir: Path) -> None:

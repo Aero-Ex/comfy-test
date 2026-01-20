@@ -19,30 +19,12 @@ class TestPaths:
         comfyui_dir: ComfyUI installation directory
         python: Python executable path
         custom_nodes_dir: custom_nodes/ directory
-        venv_dir: venv directory (None for portable)
     """
 
     work_dir: Path
     comfyui_dir: Path
     python: Path
     custom_nodes_dir: Path
-    venv_dir: Optional[Path] = None
-
-    @property
-    def pip(self) -> Path:
-        """Get pip executable path."""
-        if self.venv_dir:
-            # In venv
-            bin_dir = self.venv_dir / ("Scripts" if self._is_windows() else "bin")
-            return bin_dir / ("pip.exe" if self._is_windows() else "pip")
-        else:
-            # Portable - pip is alongside python
-            return self.python.parent / ("pip.exe" if self._is_windows() else "pip")
-
-    def _is_windows(self) -> bool:
-        """Check if running on Windows."""
-        import sys
-        return sys.platform == "win32"
 
 
 class TestPlatform(ABC):
@@ -79,7 +61,7 @@ class TestPlatform(ABC):
         """
         Set up ComfyUI for testing.
 
-        For Linux/Windows: clone repo, create venv, install deps
+        For Linux/Windows: clone repo, install deps to system Python
         For Portable: download and extract 7z
 
         Args:

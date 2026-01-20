@@ -4,34 +4,27 @@ import subprocess
 import shutil
 import time
 import re
+import sys
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, List, Tuple
 
 ACT_IMAGE = "catthehacker/ubuntu:act-22.04"
 
+# Patterns to detect step transitions in act output
+STEP_START = re.compile(r'^Run (?:Main |Post )?(.+)$')
+STEP_SUCCESS = re.compile(r'^Success - (?:Main |Post )?(.+?) \[')
+STEP_FAILURE = re.compile(r'^Failure - (?:Main |Post )?(.+?) \[')
+
 
 def split_log_by_workflow(log_file: Path, logs_dir: Path) -> int:
-    """Extract per-workflow sections from main log file.
-
-    Parses the main log and creates individual log files for each workflow,
-    containing the full ComfyUI output during that workflow's execution.
-
-    Args:
-        log_file: Path to main log file
-        logs_dir: Directory to write per-workflow logs
-
-    Returns:
-        Number of workflow logs created
-    """
+    """Extract per-workflow sections from main log file."""
     if not log_file.exists():
         return 0
 
     content = log_file.read_text()
     lines = content.splitlines()
 
-    # Pattern to match workflow start: [time] |   [N/total] RUNNING... name.json
     workflow_start = re.compile(r'\[\d+/\d+\] RUNNING.*?(\S+)\.json')
-    # Pattern to match workflow end: Status: success or FAILED
     workflow_end = re.compile(r'Status: (success|FAILED)')
 
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -41,10 +34,8 @@ def split_log_by_workflow(log_file: Path, logs_dir: Path) -> int:
     count = 0
 
     for line in lines:
-        # Check for workflow start
         match = workflow_start.search(line)
         if match:
-            # Save previous workflow if any (shouldn't happen normally)
             if current_workflow and current_lines:
                 (logs_dir / f"{current_workflow}.log").write_text("\n".join(current_lines))
                 count += 1
@@ -52,7 +43,6 @@ def split_log_by_workflow(log_file: Path, logs_dir: Path) -> int:
             current_lines = [line]
         elif current_workflow:
             current_lines.append(line)
-            # Check for workflow end
             if workflow_end.search(line):
                 (logs_dir / f"{current_workflow}.log").write_text("\n".join(current_lines))
                 count += 1
@@ -67,6 +57,7 @@ def run_local(
     output_dir: Path,
     config_file: str = "comfy-test.toml",
     gpu: bool = False,
+    verbose: bool = False,
     log_callback: Optional[Callable[[str], None]] = None,
 ) -> int:
     """Run tests locally via act (GitHub Actions in Docker).
@@ -76,6 +67,7 @@ def run_local(
         output_dir: Where to save screenshots/logs/results.json
         config_file: Config file name
         gpu: Enable GPU passthrough
+        verbose: Show all output (streaming mode)
         log_callback: Function to call with log lines
 
     Returns:
@@ -110,7 +102,6 @@ def run_local(
     local_workflow = local_comfy_test / ".github" / "workflows" / "test-matrix-local.yml"
 
     if local_workflow.exists():
-        # Copy and modify workflow for unique job names
         node_workflow_dir = node_dir / ".github" / "workflows"
         node_workflow_dir.mkdir(parents=True, exist_ok=True)
         target = node_workflow_dir / "test-matrix.yml"
@@ -124,7 +115,6 @@ def run_local(
             target.unlink()
         target.write_text(workflow_content)
 
-        # Patch comfy-test.yml to use local workflow reference
         comfy_test_yml = node_workflow_dir / "comfy-test.yml"
         if comfy_test_yml.exists():
             content = comfy_test_yml.read_text()
@@ -151,7 +141,7 @@ def run_local(
 
     # Build command
     cmd = [
-        "stdbuf", "-oL",  # Force line buffering
+        "stdbuf", "-oL",
         "act",
         "-P", f"ubuntu-latest={ACT_IMAGE}",
         "--pull=false",
@@ -162,9 +152,6 @@ def run_local(
     ]
     if gpu:
         cmd.extend(["--env", "COMFY_TEST_GPU=1"])
-
-    log(f"Running: {' '.join(cmd)}")
-    log(f"Output: {output_dir}")
 
     # Patterns to strip from output
     emoji_pattern = re.compile(r'[⭐🚀🐳✅❌🏁⬇️📜✏️❓🧪🔧💬⚙️🚧☁️]')
@@ -182,6 +169,11 @@ def run_local(
         universal_newlines=True,
     )
 
+    # Track steps for summary mode
+    current_step = None
+    current_step_output: List[str] = []
+    completed_steps: List[Tuple[str, bool, List[str]]] = []
+
     try:
         with open(log_file, "w") as f:
             while True:
@@ -195,9 +187,38 @@ def run_local(
                         mins, secs = divmod(elapsed, 60)
                         timer = f"[{mins:02d}:{secs:02d}]"
                         formatted = f"{timer} {clean_line}"
-                        log(formatted)
+
+                        # Always write to log file
                         f.write(formatted + "\n")
                         f.flush()
+
+                        if verbose:
+                            # Verbose mode: stream everything
+                            log(formatted)
+                        else:
+                            # Summary mode: track steps
+                            if match := STEP_START.search(clean_line):
+                                current_step = match.group(1)
+                                current_step_output = []
+                                # Print step name without newline
+                                sys.stdout.write(f"  {current_step}... ")
+                                sys.stdout.flush()
+                            elif match := STEP_SUCCESS.search(clean_line):
+                                step_name = match.group(1)
+                                print("[OK]")
+                                completed_steps.append((step_name, True, []))
+                                current_step = None
+                            elif match := STEP_FAILURE.search(clean_line):
+                                step_name = match.group(1)
+                                print("[ERROR]")
+                                completed_steps.append((step_name, False, current_step_output.copy()))
+                                current_step = None
+
+                            # Capture output for error context
+                            if current_step and clean_line.strip():
+                                current_step_output.append(clean_line)
+                                if len(current_step_output) > 20:
+                                    current_step_output.pop(0)
                     elif process.poll() is not None:
                         break
                 else:
@@ -205,7 +226,6 @@ def run_local(
     except KeyboardInterrupt:
         process.kill()
         process.wait()
-        # Kill any orphaned act containers
         subprocess.run(
             f"docker kill $(docker ps -q --filter ancestor={ACT_IMAGE}) 2>/dev/null",
             shell=True,
@@ -214,8 +234,15 @@ def run_local(
         log("\nTest cancelled")
         return 130
 
+    # Show error context for failed steps
+    if not verbose:
+        for step_name, success, output in completed_steps:
+            if not success and output:
+                log(f"\n  Error in {step_name}:")
+                for line in output[-5:]:
+                    log(f"    {line}")
+
     # Split main log into per-workflow logs
-    # Clear any Docker-created logs first (they're owned by root)
     logs_dir = output_dir / "logs"
     if logs_dir.exists():
         subprocess.run(["sudo", "rm", "-rf", str(logs_dir)], capture_output=True)
@@ -227,20 +254,10 @@ def run_local(
     results_file = output_dir / "results.json"
 
     if screenshot_files or results_file.exists() or log_file.exists():
-        log(f"\nOutput: {output_dir}")
-        if log_file.exists():
-            log(f"  Log: {log_file.name}")
+        log(f"\nLog: {log_file}")
         if workflow_logs:
-            log(f"  Workflow logs: {workflow_logs}")
+            log(f"Workflow logs: {workflow_logs}")
         if screenshot_files:
-            log(f"  Screenshots: {len(screenshot_files)}")
-        if results_file.exists():
-            log(f"  Results: results.json")
-    else:
-        # Clean up empty directory
-        try:
-            output_dir.rmdir()
-        except OSError:
-            pass
+            log(f"Screenshots: {len(screenshot_files)}")
 
     return process.returncode or 0

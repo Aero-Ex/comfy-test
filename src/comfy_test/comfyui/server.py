@@ -52,6 +52,7 @@ class ComfyUIServer:
         self._api: Optional[ComfyUIAPI] = None
         self._output_thread: Optional[threading.Thread] = None
         self._stop_output_thread = False
+        self._output_lines: List[str] = []  # Captured server output
 
     @property
     def base_url(self) -> str:
@@ -110,14 +111,20 @@ class ComfyUIServer:
                 for key, _ in sel.select(timeout=0.1):
                     line = key.fileobj.readline()
                     if line:
-                        self._log(f"  [ComfyUI] {line.rstrip()}")
+                        line_text = line.rstrip()
+                        self._output_lines.append(line_text)
+                        self._log(f"  [ComfyUI] {line_text}")
                 # Check if process ended
                 if self._process.poll() is not None:
                     # Read remaining output
                     for line in self._process.stdout:
-                        self._log(f"  [ComfyUI] {line.rstrip()}")
+                        line_text = line.rstrip()
+                        self._output_lines.append(line_text)
+                        self._log(f"  [ComfyUI] {line_text}")
                     for line in self._process.stderr:
-                        self._log(f"  [ComfyUI] {line.rstrip()}")
+                        line_text = line.rstrip()
+                        self._output_lines.append(line_text)
+                        self._log(f"  [ComfyUI] {line_text}")
                     break
         except Exception:
             pass  # Process may have ended
@@ -202,6 +209,26 @@ class ComfyUIServer:
         if self._api is None:
             raise ServerError("Server is not running")
         return self._api
+
+    def get_import_errors(self) -> List[str]:
+        """Get list of import errors from server startup logs.
+
+        Parses server output for "Cannot import" error messages that indicate
+        custom node import failures.
+
+        Returns:
+            List of error messages (empty if no errors)
+        """
+        errors = []
+        for line in self._output_lines:
+            # ComfyUI logs import errors like:
+            # "Cannot import <module_path> module for custom nodes: <error>"
+            if "Cannot import" in line and "module for custom nodes" in line:
+                errors.append(line)
+            # Also catch general import errors in traceback
+            elif "IMPORT FAILED" in line:
+                errors.append(line)
+        return errors
 
     def __enter__(self) -> "ComfyUIServer":
         self.start()

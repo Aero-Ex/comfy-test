@@ -11,7 +11,6 @@ from typing import Optional, Callable, List
 
 from .config import TestConfig, TestLevel
 from .comfy_env import get_cuda_packages, get_node_reqs
-from .node_discovery import discover_nodes, discover_nodes_subprocess
 from .platform import get_platform, TestPlatform, TestPaths
 from ..comfyui.server import ComfyUIServer
 from ..comfyui.validator import WorkflowValidator
@@ -30,8 +29,6 @@ class TestState:
     comfyui_dir: str
     python: str
     custom_nodes_dir: str
-    venv_dir: Optional[str]
-    expected_nodes: List[str]
     cuda_packages: List[str]
     platform_name: str
 
@@ -276,17 +273,8 @@ class TestManager:
                 elif cuda_packages:
                     self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
 
-                # Discover nodes from NODE_CLASS_MAPPINGS before starting server
-                # Use subprocess to run in test venv where dependencies are installed
-                expected_nodes = discover_nodes_subprocess(
-                    paths.custom_nodes_dir / self.node_dir.name,
-                    paths.python,
-                    cuda_packages,
-                    paths.comfyui_dir,
-                )
-                self._log(f"Discovered {len(expected_nodes)} node(s): {', '.join(expected_nodes)}")
-
                 # === Start server for remaining levels ===
+                # Node discovery happens via ComfyUI's own loading mechanism
                 self._log("\nStarting ComfyUI server...")
                 with ComfyUIServer(
                     platform, paths, self.config,
@@ -296,14 +284,26 @@ class TestManager:
                     api = server.get_api()
 
                     # === REGISTRATION LEVEL ===
+                    # Check server startup logs for import errors
                     if TestLevel.REGISTRATION not in config_levels:
                         self._log_level_skip(TestLevel.REGISTRATION)
                     else:
                         self._log_level_start(TestLevel.REGISTRATION, TestLevel.REGISTRATION in requested_levels)
-                        self._log("Verifying node registration...")
-                        api.verify_nodes(expected_nodes)
-                        self._log(f"All {len(expected_nodes)} expected nodes found!")
+                        self._log("Checking for import errors in server logs...")
+                        import_errors = server.get_import_errors()
+                        if import_errors:
+                            error_msg = "\n".join(import_errors)
+                            raise TestError(
+                                f"Node import failed ({len(import_errors)} error(s))",
+                                error_msg
+                            )
+                        self._log("No import errors detected")
                         self._log_level_done(TestLevel.REGISTRATION, "PASSED")
+
+                    # Get registered nodes from object_info for remaining tests
+                    object_info = api.get_object_info()
+                    registered_nodes = list(object_info.keys())
+                    self._log(f"Found {len(registered_nodes)} registered nodes")
 
                     # === INSTANTIATION LEVEL ===
                     if TestLevel.INSTANTIATION not in config_levels:
@@ -311,8 +311,8 @@ class TestManager:
                     else:
                         self._log_level_start(TestLevel.INSTANTIATION, TestLevel.INSTANTIATION in requested_levels)
                         self._log("Testing node constructors...")
-                        self._test_instantiation(platform, paths, expected_nodes, cuda_packages)
-                        self._log(f"All {len(expected_nodes)} node(s) instantiated successfully!")
+                        self._test_instantiation(platform, paths, registered_nodes, cuda_packages)
+                        self._log(f"All {len(registered_nodes)} node(s) instantiated successfully!")
                         self._log_level_done(TestLevel.INSTANTIATION, "PASSED")
 
                     # === VALIDATION LEVEL ===
@@ -665,27 +665,29 @@ class TestManager:
         self,
         platform,
         paths,
-        expected_nodes: List[str],
+        registered_nodes: List[str],
         cuda_packages: List[str],
     ) -> None:
         """Test that all node constructors can be called without errors.
 
-        This runs a subprocess in the test venv that imports NODE_CLASS_MAPPINGS
+        This runs a subprocess that imports NODE_CLASS_MAPPINGS
         and calls each node's constructor.
 
         Args:
             platform: Platform provider
             paths: Test paths
-            expected_nodes: List of expected node names
+            registered_nodes: List of registered node names (from object_info)
             cuda_packages: CUDA packages to mock
 
         Raises:
             TestError: If any node fails to instantiate
         """
         # Build the test script
+        # Use proper package import by adding custom_nodes to sys.path
         script = '''
 import sys
 import json
+from pathlib import Path
 
 # Mock CUDA packages if needed
 cuda_packages = {cuda_packages_json}
@@ -700,21 +702,19 @@ for pkg in cuda_packages:
 # Import ComfyUI's folder_paths to set up paths
 import folder_paths
 
-# Find and import the node module
-import importlib.util
-from pathlib import Path
+# Add custom_nodes directory to sys.path for proper package imports
+custom_nodes_dir = Path("{custom_nodes_dir}")
+if str(custom_nodes_dir) not in sys.path:
+    sys.path.insert(0, str(custom_nodes_dir))
 
-node_dir = Path("{node_dir}")
-init_file = node_dir / "__init__.py"
-
-if not init_file.exists():
-    print(json.dumps({{"success": False, "error": "No __init__.py found"}}))
+# Import the node as a proper package
+node_name = "{node_name}"
+try:
+    import importlib
+    module = importlib.import_module(node_name)
+except ImportError as e:
+    print(json.dumps({{"success": False, "error": f"Failed to import {{node_name}}: {{e}}"}}))
     sys.exit(1)
-
-spec = importlib.util.spec_from_file_location("test_node", init_file)
-module = importlib.util.module_from_spec(spec)
-sys.modules["test_node"] = module
-spec.loader.exec_module(module)
 
 # Get NODE_CLASS_MAPPINGS
 mappings = getattr(module, "NODE_CLASS_MAPPINGS", {{}})
@@ -736,11 +736,12 @@ result = {{
 }}
 print(json.dumps(result))
 '''.format(
-            node_dir=str(paths.custom_nodes_dir / self.node_dir.name).replace("\\", "/"),
+            custom_nodes_dir=str(paths.custom_nodes_dir).replace("\\", "/"),
+            node_name=self.node_dir.name,
             cuda_packages_json=json.dumps(cuda_packages),
         )
 
-        # Run the script in the test venv
+        # Run the script
         import subprocess
 
         result = subprocess.run(
@@ -900,7 +901,7 @@ print(json.dumps(result))
                         self._log(f"  {name} from {repo}")
                         platform.install_node_from_repo(paths, repo, name)
 
-                # Discover nodes and get CUDA packages for state
+                # Get CUDA packages for state
                 cuda_packages = get_cuda_packages(self.node_dir)
                 # Skip mocking if real GPU available (COMFY_TEST_GPU=1)
                 gpu_mode = os.environ.get("COMFY_TEST_GPU")
@@ -911,21 +912,11 @@ print(json.dumps(result))
                 elif cuda_packages:
                     self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
 
-                expected_nodes = discover_nodes_subprocess(
-                    paths.custom_nodes_dir / self.node_dir.name,
-                    paths.python,
-                    cuda_packages,
-                    paths.comfyui_dir,
-                )
-                self._log(f"Discovered {len(expected_nodes)} node(s): {', '.join(expected_nodes)}")
-
                 # Save state for later levels
                 state = TestState(
                     comfyui_dir=str(paths.comfyui_dir),
                     python=str(paths.python),
                     custom_nodes_dir=str(paths.custom_nodes_dir),
-                    venv_dir=str(paths.venv_dir) if paths.venv_dir else None,
-                    expected_nodes=list(expected_nodes),
                     cuda_packages=cuda_packages,
                     platform_name=platform_name,
                 )
@@ -964,7 +955,6 @@ print(json.dumps(result))
                 comfyui_dir=Path(state.comfyui_dir),
                 python=Path(state.python),
                 custom_nodes_dir=Path(state.custom_nodes_dir),
-                venv_dir=Path(state.venv_dir) if state.venv_dir else None,
             )
 
             platform = get_platform(platform_name, self._log)
@@ -983,14 +973,22 @@ print(json.dumps(result))
                 api = server.get_api()
 
                 if level == TestLevel.REGISTRATION:
-                    self._log("Verifying node registration...")
-                    api.verify_nodes(state.expected_nodes)
-                    self._log(f"All {len(state.expected_nodes)} expected nodes found!")
+                    self._log("Checking for import errors in server logs...")
+                    import_errors = server.get_import_errors()
+                    if import_errors:
+                        error_msg = "\n".join(import_errors)
+                        raise TestError(
+                            f"Node import failed ({len(import_errors)} error(s))",
+                            error_msg
+                        )
+                    self._log("No import errors detected")
 
                 elif level == TestLevel.INSTANTIATION:
                     self._log("Testing node constructors...")
-                    self._test_instantiation(platform, paths, state.expected_nodes, state.cuda_packages)
-                    self._log(f"All {len(state.expected_nodes)} node(s) instantiated successfully!")
+                    object_info = api.get_object_info()
+                    registered_nodes = list(object_info.keys())
+                    self._test_instantiation(platform, paths, registered_nodes, state.cuda_packages)
+                    self._log(f"All {len(registered_nodes)} node(s) instantiated successfully!")
 
                 elif level == TestLevel.VALIDATION:
                     workflows_dir = self.node_dir / "workflows"

@@ -3,8 +3,9 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
-from typing import Optional, Callable, Dict, TYPE_CHECKING
+from typing import Optional, Callable, TYPE_CHECKING
 
 from .base import TestPlatform, TestPaths
 
@@ -18,7 +19,10 @@ PYTORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu128"
 
 
 class LinuxTestPlatform(TestPlatform):
-    """Linux platform implementation for ComfyUI testing."""
+    """Linux platform implementation for ComfyUI testing.
+
+    Uses system Python directly (no venv) for simpler, faster tests.
+    """
 
     @property
     def name(self) -> str:
@@ -33,15 +37,13 @@ class LinuxTestPlatform(TestPlatform):
         Set up ComfyUI for testing on Linux.
 
         1. Clone ComfyUI from GitHub
-        2. Create venv with uv
-        3. Install requirements
-        4. Install PyTorch (CPU)
+        2. Install requirements to system Python
+        3. Install PyTorch (CPU or CUDA)
         """
         work_dir = Path(work_dir).resolve()
         work_dir.mkdir(parents=True, exist_ok=True)
 
         comfyui_dir = work_dir / "ComfyUI"
-        venv_dir = work_dir / "venv"
 
         # Clone ComfyUI
         self._log(f"Cloning ComfyUI ({config.comfyui_version})...")
@@ -55,22 +57,12 @@ class LinuxTestPlatform(TestPlatform):
 
         self._run_command(clone_args, cwd=work_dir)
 
-        # Create custom_nodes directory (git doesn't track empty directories)
+        # Create custom_nodes directory
         custom_nodes_dir = comfyui_dir / "custom_nodes"
         custom_nodes_dir.mkdir(exist_ok=True)
 
-        # Create venv with uv
-        self._log(f"Creating venv (Python {config.python_version})...")
-        if venv_dir.exists():
-            shutil.rmtree(venv_dir)
-
-        self._run_command(
-            ["uv", "venv", str(venv_dir), "--python", config.python_version],
-            cwd=work_dir,
-        )
-
-        python = venv_dir / "bin" / "python"
-        pip = venv_dir / "bin" / "pip"
+        # Use system Python
+        python = Path(sys.executable)
 
         # Install PyTorch (CUDA if GPU mode, otherwise CPU)
         gpu_mode = os.environ.get("COMFY_TEST_GPU")
@@ -82,15 +74,9 @@ class LinuxTestPlatform(TestPlatform):
             pytorch_index = PYTORCH_CPU_INDEX
 
         self._run_command(
-            ["uv", "pip", "install", "--python", str(python),
+            ["uv", "pip", "install", "--system",
              "torch==2.8.0", "torchvision", "torchaudio",
              "--index-url", pytorch_index],
-            cwd=work_dir,
-        )
-
-        # Install pip (for install.py scripts that use python -m pip)
-        self._run_command(
-            ["uv", "pip", "install", "--python", str(python), "pip"],
             cwd=work_dir,
         )
 
@@ -99,7 +85,7 @@ class LinuxTestPlatform(TestPlatform):
         requirements_file = comfyui_dir / "requirements.txt"
         if requirements_file.exists():
             self._run_command(
-                ["uv", "pip", "install", "--python", str(python),
+                ["uv", "pip", "install", "--system",
                  "-r", str(requirements_file)],
                 cwd=work_dir,
             )
@@ -109,7 +95,6 @@ class LinuxTestPlatform(TestPlatform):
             comfyui_dir=comfyui_dir,
             python=python,
             custom_nodes_dir=custom_nodes_dir,
-            venv_dir=venv_dir,
         )
 
     def install_node(self, paths: TestPaths, node_dir: Path) -> None:
@@ -117,8 +102,8 @@ class LinuxTestPlatform(TestPlatform):
         Install custom node into ComfyUI.
 
         1. Symlink to custom_nodes/
-        2. Run install.py if present
-        3. Install requirements.txt if present
+        2. Install requirements.txt if present
+        3. Run install.py if present
         """
         node_dir = Path(node_dir).resolve()
         node_name = node_dir.name
@@ -140,7 +125,7 @@ class LinuxTestPlatform(TestPlatform):
         if requirements_file.exists():
             self._log("Installing node requirements...")
             self._run_command(
-                ["uv", "pip", "install", "--python", str(paths.python),
+                ["uv", "pip", "install", "--system",
                  "-r", str(requirements_file)],
                 cwd=node_dir,
             )
@@ -149,7 +134,6 @@ class LinuxTestPlatform(TestPlatform):
         install_py = node_dir / "install.py"
         if install_py.exists():
             self._log("Running install.py...")
-            # Set CUDA version for CPU-only CI (comfy-env will use this if no GPU detected)
             install_env = {"COMFY_ENV_CUDA_VERSION": "12.8"}
             self._run_command(
                 [str(paths.python), str(install_py)],
@@ -181,9 +165,6 @@ class LinuxTestPlatform(TestPlatform):
 
         # Set environment
         env = os.environ.copy()
-        if paths.venv_dir:
-            env["VIRTUAL_ENV"] = str(paths.venv_dir)
-            env["PATH"] = f"{paths.venv_dir}/bin:{env.get('PATH', '')}"
         if extra_env:
             env.update(extra_env)
 
@@ -233,7 +214,7 @@ class LinuxTestPlatform(TestPlatform):
         if requirements_file.exists():
             self._log(f"  Installing {name} requirements...")
             self._run_command(
-                ["uv", "pip", "install", "--python", str(paths.python),
+                ["uv", "pip", "install", "--system",
                  "-r", str(requirements_file)],
                 cwd=target_dir,
             )

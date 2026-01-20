@@ -60,7 +60,6 @@ except PackageNotFoundError:
 from .test.config import TestConfig, WorkflowConfig, PlatformTestConfig
 from .test.config_file import load_config, discover_config, CONFIG_FILE_NAMES
 from .test.manager import TestManager, TestResult
-from .test.node_discovery import discover_nodes
 from .errors import (
     TestError,
     ConfigError,
@@ -86,8 +85,6 @@ __all__ = [
     # Manager
     "TestManager",
     "TestResult",
-    # Node discovery
-    "discover_nodes",
     # Errors
     "TestError",
     "ConfigError",

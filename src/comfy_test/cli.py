@@ -9,7 +9,6 @@ from typing import Optional
 from .test.config import TestLevel
 from .test.config_file import discover_config, load_config, CONFIG_FILE_NAMES
 from .test.manager import TestManager
-from .test.node_discovery import discover_nodes
 from .errors import TestError, ConfigError, SetupError
 
 
@@ -155,15 +154,8 @@ def cmd_info(args) -> int:
         print(f"  Windows: {'enabled' if config.windows.enabled else 'disabled'}")
         print(f"  Windows Portable: {'enabled' if config.windows_portable.enabled else 'disabled'}")
         print()
-        print("Nodes (auto-discovered from NODE_CLASS_MAPPINGS):")
-        try:
-            node_dir = Path(args.config).parent if args.config else Path.cwd()
-            nodes = discover_nodes(node_dir)
-            print(f"  Found {len(nodes)} node(s):")
-            for node in nodes:
-                print(f"    - {node}")
-        except SetupError as e:
-            print(f"  Error discovering nodes: {e.message}")
+        print("Nodes:")
+        print("  Discovered at runtime when ComfyUI starts")
         print()
         print("Workflows:")
         print(f"  Timeout: {config.workflow.timeout}s")
