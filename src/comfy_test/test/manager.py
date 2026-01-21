@@ -432,7 +432,12 @@ class TestManager:
                         }
                         results_file = self.node_dir / ".comfy-test" / "results.json"
                         results_file.write_text(json.dumps(results_data, indent=2))
-                        self._log(f"  Results saved to {results_file}")
+                        self._log(f"Results saved to {results_file}")
+
+                        # Generate HTML report
+                        from ..report import generate_html_report
+                        html_file = generate_html_report(self.node_dir / ".comfy-test", self.node_dir.name)
+                        self._log(f"Saved: {html_file}")
 
                         if all_errors:
                             raise WorkflowExecutionError(
@@ -1034,7 +1039,12 @@ print(json.dumps(result))
                         }
                         results_file = self.node_dir / ".comfy-test" / "results.json"
                         results_file.write_text(json.dumps(results_data, indent=2))
-                        self._log(f"  Results saved to {results_file}")
+                        self._log(f"Results saved to {results_file}")
+
+                        # Generate HTML report
+                        from ..report import generate_html_report
+                        html_file = generate_html_report(self.node_dir / ".comfy-test", self.node_dir.name)
+                        self._log(f"Saved: {html_file}")
 
                         if all_errors:
                             raise WorkflowExecutionError(
