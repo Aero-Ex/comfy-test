@@ -191,6 +191,19 @@ class WorkflowScreenshot:
             self._playwright.stop()
             self._playwright = None
 
+    def _fit_graph_to_view(self) -> None:
+        """Fit the entire graph/workflow in the viewport.
+
+        Uses the '.' keyboard shortcut which triggers ComfyUI's built-in
+        "Fit view to selection (whole graph when nothing is selected)" feature.
+        """
+        try:
+            # Press '.' to trigger fit view (ComfyUI keyboard shortcut)
+            self._page.keyboard.press(".")
+            self._page.wait_for_timeout(500)
+        except Exception:
+            pass  # Best effort
+
     def __enter__(self) -> "WorkflowScreenshot":
         self.start()
         return self
@@ -263,17 +276,8 @@ class WorkflowScreenshot:
         # Wait for graph to render
         self._page.wait_for_timeout(wait_ms)
 
-        # Fit the graph to view
-        try:
-            self._page.evaluate("""
-                if (window.app && window.app.canvas) {
-                    window.app.canvas.ds.reset();
-                    window.app.graph.setDirtyCanvas(true, true);
-                }
-            """)
-            self._page.wait_for_timeout(500)
-        except Exception:
-            pass  # Best effort
+        # Fit the entire graph in view
+        self._fit_graph_to_view()
 
         # Close any open modals (like Templates popup)
         try:
@@ -463,17 +467,8 @@ class WorkflowScreenshot:
         self._log(f"  Waiting {wait_after_completion_ms}ms for previews to render...")
         self._page.wait_for_timeout(wait_after_completion_ms)
 
-        # Fit the graph to view
-        try:
-            self._page.evaluate("""
-                if (window.app && window.app.canvas) {
-                    window.app.canvas.ds.reset();
-                    window.app.graph.setDirtyCanvas(true, true);
-                }
-            """)
-            self._page.wait_for_timeout(500)
-        except Exception:
-            pass  # Best effort
+        # Fit the entire graph in view
+        self._fit_graph_to_view()
 
         # Close any open modals (like Templates popup)
         try:
