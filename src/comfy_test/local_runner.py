@@ -17,6 +17,54 @@ STEP_SUCCESS = re.compile(r'^Success - (?:Main |Post )?(.+?) \[')
 STEP_FAILURE = re.compile(r'^Failure - (?:Main |Post )?(.+?) \[')
 
 
+def _gitignore_filter(base_dir: Path):
+    """Create a shutil.copytree ignore function based on .gitignore patterns."""
+    import fnmatch
+
+    # Always ignore these (essential for clean copy)
+    # Note: .git is NOT ignored - workflow needs it for checkout step
+    always_ignore = {'__pycache__', '.comfy-test', '.comfy-test-env'}
+
+    # Parse .gitignore if it exists
+    gitignore_patterns = []
+    gitignore_file = base_dir / ".gitignore"
+    if gitignore_file.exists():
+        for line in gitignore_file.read_text().splitlines():
+            line = line.strip()
+            # Skip comments and empty lines
+            if not line or line.startswith('#'):
+                continue
+            # Remove trailing slashes (we match both files and dirs)
+            pattern = line.rstrip('/')
+            gitignore_patterns.append(pattern)
+
+    def ignore_func(directory: str, names: List[str]) -> List[str]:
+        ignored = []
+        rel_dir = Path(directory).relative_to(base_dir) if directory != str(base_dir) else Path('.')
+
+        for name in names:
+            # Always ignore these
+            if name in always_ignore:
+                ignored.append(name)
+                continue
+
+            # Check gitignore patterns
+            rel_path = rel_dir / name
+            for pattern in gitignore_patterns:
+                # Match against filename and relative path
+                if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(str(rel_path), pattern):
+                    ignored.append(name)
+                    break
+                # Handle patterns like "dir/" matching directories
+                if pattern.endswith('/') and fnmatch.fnmatch(name, pattern[:-1]):
+                    ignored.append(name)
+                    break
+
+        return ignored
+
+    return ignore_func
+
+
 def split_log_by_workflow(log_file: Path, logs_dir: Path) -> int:
     """Extract per-workflow sections from main log file."""
     if not log_file.exists():
@@ -95,8 +143,8 @@ def run_local(
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create main log file (sibling to output_dir, not inside it)
-    log_file = output_dir.parent / f"{output_dir.name}.log"
+    # Create main log file inside output_dir
+    log_file = output_dir / f"{output_dir.name}.log"
 
     # Local paths
     local_comfy_test = Path.home() / "utils" / "comfy-test"
@@ -108,14 +156,11 @@ def run_local(
     work_dir = Path(temp_dir) / node_dir.name
 
     try:
-        # Copy node to temp dir
+        # Copy node to temp dir, respecting .gitignore
         log(f"Copying node to isolated environment...")
         shutil.copytree(
             node_dir, work_dir,
-            ignore=shutil.ignore_patterns(
-                '__pycache__', '*.pyc', '.venv', '*.egg-info',
-                '.comfy-test-env', '.comfy-test', '_env_*'
-            )
+            ignore=_gitignore_filter(node_dir)
         )
 
         # Set up local workflow

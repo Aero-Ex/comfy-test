@@ -83,7 +83,7 @@ jobs:
         run: |
           if ls .wheels/comfy_test-*.whl 1>/dev/null 2>&1; then
             echo "Installing comfy-test from pre-built wheel"
-            pip install .wheels/comfy_test-*.whl
+            pip install --force-reinstall .wheels/comfy_test-*.whl
             pip install playwright pillow  # screenshot extras
           elif [ -d ".local-comfy-test" ]; then
             echo "Installing comfy-test from local copy"

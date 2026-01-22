@@ -19,6 +19,14 @@ from ..errors import TestError, VerificationError, WorkflowValidationError, Work
 from ..screenshot import ScreenshotError
 
 
+def _get_workflow_timeout(config_timeout: int) -> int:
+    """Get workflow timeout, using very long timeout for GPU mode."""
+    if os.environ.get("COMFY_TEST_GPU"):
+        # GPU mode: use 24 hours (effectively no timeout)
+        return 86400
+    return config_timeout
+
+
 @dataclass
 class TestState:
     """State persisted between CLI invocations for multi-step CI.
@@ -419,7 +427,7 @@ class TestManager:
                                         ws.capture_after_execution(
                                             workflow_file,
                                             output_path=output_path,
-                                            timeout=self.config.workflow.timeout,
+                                            timeout=_get_workflow_timeout(self.config.workflow.timeout),
                                         )
                                         capture_log(f"    Status: success")
                                     else:
@@ -427,7 +435,7 @@ class TestManager:
                                         capture_log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
                                         result = runner.run_workflow(
                                             workflow_file,
-                                            timeout=self.config.workflow.timeout,
+                                            timeout=_get_workflow_timeout(self.config.workflow.timeout),
                                         )
                                         capture_log(f"    Status: {result['status']}")
                                 except (WorkflowError, TestTimeoutError, ScreenshotError) as e:
@@ -1052,7 +1060,7 @@ print(json.dumps(result))
                                         ws.capture_after_execution(
                                             workflow_file,
                                             output_path=output_path,
-                                            timeout=self.config.workflow.timeout,
+                                            timeout=_get_workflow_timeout(self.config.workflow.timeout),
                                         )
                                         capture_log(f"    Status: success")
                                     else:
@@ -1060,7 +1068,7 @@ print(json.dumps(result))
                                         capture_log(f"  [{idx}/{total_workflows}] RUNNING {workflow_file.name}")
                                         result = runner.run_workflow(
                                             workflow_file,
-                                            timeout=self.config.workflow.timeout,
+                                            timeout=_get_workflow_timeout(self.config.workflow.timeout),
                                         )
                                         capture_log(f"    Status: {result['status']}")
                                 except (WorkflowError, TestTimeoutError, ScreenshotError) as e:

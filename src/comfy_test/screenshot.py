@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import requests
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
@@ -179,6 +180,7 @@ class WorkflowScreenshot:
             device_scale_factor=2,  # HiDPI for crisp screenshots
         )
 
+
     def stop(self) -> None:
         """Stop the headless browser."""
         if self._page:
@@ -190,6 +192,32 @@ class WorkflowScreenshot:
         if self._playwright:
             self._playwright.stop()
             self._playwright = None
+
+    def _disable_first_run_tutorial(self) -> None:
+        """Set server-side setting to prevent Templates panel from showing."""
+        try:
+            # Call ComfyUI's /settings API to mark tutorial as completed
+            requests.post(
+                f"{self.server_url}/settings/Comfy.TutorialCompleted",
+                json=True,
+                timeout=5,
+            )
+        except Exception:
+            pass  # Best effort - server might not be running yet
+
+    def _close_panels_and_alerts(self) -> None:
+        """Close Templates sidebar panel if open."""
+        try:
+            # Click the X button (pi-times icon) on Templates panel
+            self._page.evaluate("""
+                (() => {
+                    const closeIcon = document.querySelector('i.pi.pi-times');
+                    if (closeIcon) closeIcon.click();
+                })();
+            """)
+            self._page.wait_for_timeout(200)
+        except Exception:
+            pass
 
     def _fit_graph_to_view(self) -> None:
         """Fit the entire graph/workflow in the viewport.
@@ -246,6 +274,9 @@ class WorkflowScreenshot:
 
         self._log(f"Capturing: {workflow_path.name}")
 
+        # Set server-side setting to prevent Templates panel from showing
+        self._disable_first_run_tutorial()
+
         # Navigate to ComfyUI
         try:
             self._page.goto(self.server_url, wait_until="networkidle")
@@ -279,8 +310,8 @@ class WorkflowScreenshot:
         # Fit the entire graph in view
         self._fit_graph_to_view()
 
-        # Close any open modals/sidebars and dismiss alerts
-        self._cleanup_ui()
+        # Close any open panels (Templates sidebar) and dismiss alerts
+        self._close_panels_and_alerts()
 
         # Take screenshot with a temp file first
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -300,58 +331,6 @@ class WorkflowScreenshot:
 
         self._log(f"  Saved: {output_path}")
         return output_path
-
-    def _cleanup_ui(self) -> None:
-        """Close sidebars, modals, and dismiss alerts for a clean screenshot."""
-        try:
-            # Press Escape multiple times to close any open modals/menus
-            for _ in range(3):
-                self._page.keyboard.press("Escape")
-                self._page.wait_for_timeout(100)
-
-            # Click on the canvas area to close any sidebars (center-right of screen)
-            # This clicks away from the sidebar to dismiss it
-            self._page.mouse.click(960, 400)
-            self._page.wait_for_timeout(200)
-
-            # Remove Templates sidebar and alerts via JavaScript
-            self._page.evaluate("""
-                (() => {
-                    // Remove the Templates/sidebar panel entirely
-                    document.querySelectorAll('[class*="sidebar"], [class*="side-bar"], [class*="template"]').forEach(el => {
-                        // Only remove if it looks like a popup/overlay (not the main UI)
-                        if (el.querySelector('[class*="template"]') || el.textContent.includes('Templates')) {
-                            el.style.display = 'none';
-                        }
-                    });
-
-                    // Find and hide the floating panel with "Templates" header
-                    document.querySelectorAll('div').forEach(el => {
-                        if (el.children.length > 0 && el.innerText.startsWith('Templates') && el.getBoundingClientRect().width > 200) {
-                            el.style.display = 'none';
-                        }
-                    });
-
-                    // Remove all alert/toast notifications (the "Error loading model" popups)
-                    document.querySelectorAll('[class*="alert"], [class*="toast"], [class*="notification"], [class*="message"]').forEach(el => {
-                        if (el.textContent.includes('Alert') || el.textContent.includes('Error') || el.textContent.includes('loading model')) {
-                            el.remove();
-                        }
-                    });
-
-                    // Also try clicking any visible X/close buttons
-                    document.querySelectorAll('button').forEach(btn => {
-                        const text = btn.textContent.trim();
-                        const ariaLabel = btn.getAttribute('aria-label') || '';
-                        if (text === '×' || text === 'X' || text === '✕' || ariaLabel.toLowerCase().includes('close')) {
-                            btn.click();
-                        }
-                    });
-                })();
-            """)
-            self._page.wait_for_timeout(300)
-        except Exception:
-            pass  # Best effort
 
     def capture_after_execution(
         self,
@@ -394,6 +373,9 @@ class WorkflowScreenshot:
 
         self._log(f"Executing and capturing: {workflow_path.name}")
 
+        # Set server-side setting to prevent Templates panel from showing
+        self._disable_first_run_tutorial()
+
         # Navigate to ComfyUI
         try:
             self._page.goto(self.server_url, wait_until="networkidle")
@@ -424,102 +406,26 @@ class WorkflowScreenshot:
         # Wait for graph to render before execution
         self._page.wait_for_timeout(2000)
 
-        # Queue the workflow for execution and get the prompt_id
-        # We call the /prompt API directly rather than using window.app.queuePrompt
-        # because the frontend method may not return the prompt_id consistently
+        # Queue the workflow - just call queuePrompt() and wait
         self._log("  Queuing workflow for execution...")
-        try:
-            result = self._page.evaluate("""
-                (async () => {
-                    // Get the workflow in API format from the graph
-                    const prompt = await window.app.graphToPrompt();
+        self._page.evaluate("window.app.queuePrompt()")
 
-                    // Queue via API directly
-                    const resp = await fetch('/prompt', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ prompt: prompt.output })
-                    });
-
-                    if (!resp.ok) {
-                        const text = await resp.text();
-                        return { error: `HTTP ${resp.status}: ${text}` };
-                    }
-
-                    return await resp.json();
-                })();
-            """)
-        except Exception as e:
-            raise ScreenshotError("Failed to queue workflow for execution", str(e))
-
-        if not result:
-            raise ScreenshotError("No response from /prompt API")
-
-        if "error" in result:
-            raise ScreenshotError("Failed to queue prompt", result["error"])
-
-        prompt_id = result.get("prompt_id")
-        if not prompt_id:
-            raise ScreenshotError("No prompt_id in response", f"Got: {result}")
-
-        self._log(f"  Prompt ID: {prompt_id}")
-
-        # Poll the history API for completion
+        # Wait for "X job completed" notification to appear (indicates execution done)
         self._log("  Waiting for execution to complete...")
         try:
-            # Poll history endpoint until status is success or error
-            result = self._page.evaluate(f"""
-                async () => {{
-                    const timeout = {timeout * 1000};
-                    const startTime = Date.now();
-                    const promptId = "{prompt_id}";
+            self._page.wait_for_selector('text=/\\d+ job completed/i', timeout=timeout * 1000)
+        except Exception:
+            pass  # Continue even if not found - might have already disappeared
 
-                    while (Date.now() - startTime < timeout) {{
-                        try {{
-                            const resp = await fetch('/history/' + promptId);
-                            const data = await resp.json();
-                            const history = data[promptId];
-
-                            if (history) {{
-                                const status = history.status?.status_str;
-                                if (status === 'success') {{
-                                    return {{ success: true, status: 'success' }};
-                                }}
-                                if (status === 'error') {{
-                                    const errorMsg = history.status?.messages?.[0]?.[1] || 'Unknown error';
-                                    return {{ success: false, status: 'error', error: errorMsg }};
-                                }}
-                            }}
-                        }} catch (e) {{
-                            // Ignore fetch errors, keep polling
-                        }}
-
-                        // Wait 1 second before next poll
-                        await new Promise(r => setTimeout(r, 1000));
-                    }}
-
-                    return {{ success: false, status: 'timeout', error: 'Execution timed out' }};
-                }}
-            """)
-        except Exception as e:
-            raise ScreenshotError("Error while waiting for execution", str(e))
-
-        if not result.get("success"):
-            status = result.get("status", "unknown")
-            error = result.get("error", "Unknown error")
-            raise ScreenshotError(f"Workflow execution failed: {status}", error)
-
-        self._log("  Execution completed successfully")
-
-        # Wait for preview nodes to render their outputs
-        self._log(f"  Waiting {wait_after_completion_ms}ms for previews to render...")
+        # Extra wait for previews to fully render
         self._page.wait_for_timeout(wait_after_completion_ms)
+        self._log("  Execution completed")
 
         # Fit the entire graph in view
         self._fit_graph_to_view()
 
-        # Close any open modals/sidebars and dismiss alerts
-        self._cleanup_ui()
+        # Close any open panels (Templates sidebar) and dismiss alerts
+        self._close_panels_and_alerts()
 
         # Take screenshot with a temp file first
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
