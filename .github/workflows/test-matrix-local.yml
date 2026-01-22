@@ -101,10 +101,10 @@ jobs:
         run: |
           if ls .wheels/comfy_env-*.whl 1>/dev/null 2>&1; then
             echo "Installing comfy-env from pre-built wheel"
-            pip install .wheels/comfy_env-*.whl
+            pip install --force-reinstall .wheels/comfy_env-*.whl
           elif [ -d ".local-comfy-env" ]; then
             echo "Installing comfy-env from local copy"
-            pip install .local-comfy-env
+            pip install --force-reinstall .local-comfy-env
           fi
 
       - name: Syntax
@@ -114,7 +114,9 @@ jobs:
       - name: Install
         id: install
         if: always()
-        run: comfy-test run --platform linux --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+        run: |
+          export COMFY_LOCAL_WHEELS="$(pwd)/.wheels"
+          comfy-test run --platform linux --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
 
       - name: Registration
         id: registration

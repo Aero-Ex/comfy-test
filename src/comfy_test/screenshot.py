@@ -279,12 +279,8 @@ class WorkflowScreenshot:
         # Fit the entire graph in view
         self._fit_graph_to_view()
 
-        # Close any open modals (like Templates popup)
-        try:
-            self._page.keyboard.press("Escape")
-            self._page.wait_for_timeout(200)
-        except Exception:
-            pass
+        # Close any open modals/sidebars and dismiss alerts
+        self._cleanup_ui()
 
         # Take screenshot with a temp file first
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -304,6 +300,58 @@ class WorkflowScreenshot:
 
         self._log(f"  Saved: {output_path}")
         return output_path
+
+    def _cleanup_ui(self) -> None:
+        """Close sidebars, modals, and dismiss alerts for a clean screenshot."""
+        try:
+            # Press Escape multiple times to close any open modals/menus
+            for _ in range(3):
+                self._page.keyboard.press("Escape")
+                self._page.wait_for_timeout(100)
+
+            # Click on the canvas area to close any sidebars (center-right of screen)
+            # This clicks away from the sidebar to dismiss it
+            self._page.mouse.click(960, 400)
+            self._page.wait_for_timeout(200)
+
+            # Remove Templates sidebar and alerts via JavaScript
+            self._page.evaluate("""
+                (() => {
+                    // Remove the Templates/sidebar panel entirely
+                    document.querySelectorAll('[class*="sidebar"], [class*="side-bar"], [class*="template"]').forEach(el => {
+                        // Only remove if it looks like a popup/overlay (not the main UI)
+                        if (el.querySelector('[class*="template"]') || el.textContent.includes('Templates')) {
+                            el.style.display = 'none';
+                        }
+                    });
+
+                    // Find and hide the floating panel with "Templates" header
+                    document.querySelectorAll('div').forEach(el => {
+                        if (el.children.length > 0 && el.innerText.startsWith('Templates') && el.getBoundingClientRect().width > 200) {
+                            el.style.display = 'none';
+                        }
+                    });
+
+                    // Remove all alert/toast notifications (the "Error loading model" popups)
+                    document.querySelectorAll('[class*="alert"], [class*="toast"], [class*="notification"], [class*="message"]').forEach(el => {
+                        if (el.textContent.includes('Alert') || el.textContent.includes('Error') || el.textContent.includes('loading model')) {
+                            el.remove();
+                        }
+                    });
+
+                    // Also try clicking any visible X/close buttons
+                    document.querySelectorAll('button').forEach(btn => {
+                        const text = btn.textContent.trim();
+                        const ariaLabel = btn.getAttribute('aria-label') || '';
+                        if (text === '×' || text === 'X' || text === '✕' || ariaLabel.toLowerCase().includes('close')) {
+                            btn.click();
+                        }
+                    });
+                })();
+            """)
+            self._page.wait_for_timeout(300)
+        except Exception:
+            pass  # Best effort
 
     def capture_after_execution(
         self,
@@ -470,12 +518,8 @@ class WorkflowScreenshot:
         # Fit the entire graph in view
         self._fit_graph_to_view()
 
-        # Close any open modals (like Templates popup)
-        try:
-            self._page.keyboard.press("Escape")
-            self._page.wait_for_timeout(200)
-        except Exception:
-            pass
+        # Close any open modals/sidebars and dismiss alerts
+        self._cleanup_ui()
 
         # Take screenshot with a temp file first
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:

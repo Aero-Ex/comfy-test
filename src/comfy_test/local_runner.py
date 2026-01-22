@@ -113,7 +113,7 @@ def run_local(
         shutil.copytree(
             node_dir, work_dir,
             ignore=shutil.ignore_patterns(
-                '__pycache__', '*.pyc', '.git', '.venv', '*.egg-info',
+                '__pycache__', '*.pyc', '.venv', '*.egg-info',
                 '.comfy-test-env', '.comfy-test', '_env_*'
             )
         )
@@ -149,31 +149,30 @@ def run_local(
         if local_comfy_test.exists():
             log(f"Building comfy-test wheel...")
             subprocess.run(
-                ["pip", "wheel", str(local_comfy_test) + "[screenshot]", "--no-deps", "-w", str(wheel_dir)],
+                ["pip", "wheel", str(local_comfy_test) + "[screenshot]", "--no-deps", "--no-cache-dir", "-w", str(wheel_dir)],
                 capture_output=True, check=True
             )
 
         if local_comfy_env.exists():
             log(f"Building comfy-env wheel...")
             subprocess.run(
-                ["pip", "wheel", str(local_comfy_env), "--no-deps", "-w", str(wheel_dir)],
+                ["pip", "wheel", str(local_comfy_env), "--no-deps", "--no-cache-dir", "-w", str(wheel_dir)],
                 capture_output=True, check=True
             )
 
-        # Use unique toolcache volume per run (allows parallel runs, cleaned up after)
-        toolcache_volume = f"act-toolcache-{Path(temp_dir).name}"
-
-        # Build container options - mount output dir and unique toolcache
+        # Build container options - mount output dir
         container_opts = [
             f"-v {output_dir}:{work_dir}/.comfy-test",
-            f"-v {toolcache_volume}:/opt/hostedtoolcache",
             "--network bridge",
+            "--shm-size=8g",  # Default 64MB is too small for ML tensor transfer
         ]
         if gpu:
             container_opts.append("--gpus all")
 
         # Build command (use temp dir for action cache to avoid stale state)
         action_cache_dir = Path(temp_dir) / ".act-cache"
+        # Use unique toolcache path to isolate concurrent runs
+        toolcache_path = f"/tmp/toolcache-{Path(temp_dir).name}"
         cmd = [
             "stdbuf", "-oL",
             "act",
@@ -184,6 +183,7 @@ def run_local(
             "--action-cache-path", str(action_cache_dir),
             "--container-options", " ".join(container_opts),
             "--env", "PYTHONUNBUFFERED=1",
+            "--env", f"RUNNER_TOOL_CACHE={toolcache_path}",
         ]
         if gpu:
             cmd.extend(["--env", "COMFY_TEST_GPU=1"])
@@ -301,9 +301,5 @@ def run_local(
         return process.returncode or 0
 
     finally:
-        # Clean up temp directory and toolcache volume
+        # Clean up temp directory
         shutil.rmtree(temp_dir, ignore_errors=True)
-        subprocess.run(
-            ["docker", "volume", "rm", "-f", toolcache_volume],
-            capture_output=True
-        )

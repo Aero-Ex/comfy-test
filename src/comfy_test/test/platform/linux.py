@@ -37,6 +37,12 @@ class LinuxTestPlatform(TestPlatform):
         gpu_mode = os.environ.get("COMFY_TEST_GPU")
 
         cmd = ["uv", "pip", "install", "--system"]
+
+        # Use local wheels if available (for local testing with ct test)
+        local_wheels = os.environ.get("COMFY_LOCAL_WHEELS")
+        if local_wheels and Path(local_wheels).exists():
+            cmd.extend(["--find-links", local_wheels])
+
         if gpu_mode:
             # GPU mode: prioritize CUDA index, fallback to PyPI
             cmd.extend(["--index-url", PYTORCH_CUDA_INDEX])
