@@ -73,8 +73,10 @@ def split_log_by_workflow(log_file: Path, logs_dir: Path) -> int:
     content = log_file.read_text()
     lines = content.splitlines()
 
-    workflow_start = re.compile(r'\[\d+/\d+\] RUNNING.*?(\S+)\.json')
-    workflow_end = re.compile(r'Status: (success|FAILED)')
+    # Match: "executing mesh_info.json [1/23]"
+    workflow_start = re.compile(r'executing (\S+)\.json\s+\[\d+/\d+\]')
+    # Match: "mesh_info.json [1/23] - PASS" or "- FAIL"
+    workflow_end = re.compile(r'\.json\s+\[\d+/\d+\]\s+-\s+(PASS|FAIL)')
 
     logs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -171,8 +173,11 @@ def run_local(
 
             workflow_content = local_workflow.read_text()
             repo_suffix = node_dir.name.replace("ComfyUI-", "").lower()
+            workflow_content = workflow_content.replace("parse-config:", f"parse-config-{repo_suffix}:")
+            workflow_content = workflow_content.replace("needs: parse-config", f"needs: parse-config-{repo_suffix}")
             workflow_content = workflow_content.replace("test-linux:", f"test-linux-{repo_suffix}:")
             workflow_content = workflow_content.replace("test-windows:", f"test-windows-{repo_suffix}:")
+            workflow_content = workflow_content.replace("test-windows-portable:", f"test-windows-portable-{repo_suffix}:")
 
             target.write_text(workflow_content)
 
@@ -207,8 +212,8 @@ def run_local(
 
         # Build container options - mount output dir
         container_opts = [
+            "-t",  # Allocate pseudo-TTY to force line-buffered output
             f"-v {output_dir}:{work_dir}/.comfy-test",
-            "--network bridge",
             "--shm-size=8g",  # Default 64MB is too small for ML tensor transfer
         ]
         if gpu:
@@ -225,6 +230,7 @@ def run_local(
             "--pull=false",
             "--rm",
             "-j", "test",
+            "--network", "bridge",
             "--action-cache-path", str(action_cache_dir),
             "--container-options", " ".join(container_opts),
             "--env", "PYTHONUNBUFFERED=1",
@@ -236,6 +242,8 @@ def run_local(
         # Patterns to strip from output
         emoji_pattern = re.compile(r'[⭐🚀🐳✅❌🏁⬇️📜✏️❓🧪🔧💬⚙️🚧☁️]')
         job_prefix_pattern = re.compile(r'\[test/[^\]]+\]\s*')
+        # Detect workflow execution lines: "executing mesh_info.json [1/23]"
+        workflow_pattern = re.compile(r'executing (\S+)\s+\[(\d+)/(\d+)\]')
 
         start_time = time.time()
 
@@ -269,7 +277,7 @@ def run_local(
                             timer = f"[{mins:02d}:{secs:02d}]"
                             formatted = f"{timer} {clean_line}"
 
-                            # Always write to log file
+                            # Write to log file
                             f.write(formatted + "\n")
                             f.flush()
 
@@ -278,20 +286,22 @@ def run_local(
                                 log(formatted)
                             else:
                                 # Summary mode: track steps
-                                if match := STEP_START.search(clean_line):
+                                if workflow_match := workflow_pattern.search(clean_line):
+                                    # Show workflow progress
+                                    name, current, total = workflow_match.groups()
+                                    print(f"    {timer} Running {name} [{current}/{total}]")
+                                elif match := STEP_START.search(clean_line):
                                     current_step = match.group(1)
                                     current_step_output = []
-                                    # Print step name without newline
-                                    sys.stdout.write(f"  {current_step}... ")
-                                    sys.stdout.flush()
+                                    print(f"  {timer} {current_step}...")
                                 elif match := STEP_SUCCESS.search(clean_line):
                                     step_name = match.group(1)
-                                    print("[OK]")
+                                    print(f"  {timer} {step_name}... [OK]")
                                     completed_steps.append((step_name, True, []))
                                     current_step = None
                                 elif match := STEP_FAILURE.search(clean_line):
                                     step_name = match.group(1)
-                                    print("[ERROR]")
+                                    print(f"  {timer} {step_name}... [ERROR]")
                                     completed_steps.append((step_name, False, current_step_output.copy()))
                                     current_step = None
 

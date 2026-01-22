@@ -64,6 +64,9 @@ venv.bak/
 # Test artifacts
 .comfy-test/
 
+# Jupyter
+.ipynb_checkpoints/
+
 # OS
 .DS_Store
 Thumbs.db

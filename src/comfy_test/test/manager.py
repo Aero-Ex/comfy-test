@@ -15,12 +15,9 @@ from .config import TestConfig, TestLevel
 
 
 class ProgressSpinner:
-    """Animated progress spinner for workflow execution.
+    """Progress indicator for workflow execution.
 
-    Displays a line like:
-        [00:45] executing mesh_info.json.... [3/23]  |
-
-    The spinner character animates while execution is in progress.
+    Prints workflow start and completion status.
     """
 
     def __init__(self, workflow_name: str, current: int, total: int):
@@ -30,9 +27,6 @@ class ProgressSpinner:
         self.start_time = time.time()
         self._stop = False
         self._thread: Optional[threading.Thread] = None
-        self._chars = ['|', '/', '-', '\\']
-        self._idx = 0
-        self._last_line_len = 0
 
     def start(self) -> None:
         """Start the spinner animation in a background thread."""
@@ -40,36 +34,21 @@ class ProgressSpinner:
         self._thread.start()
 
     def _spin(self) -> None:
-        """Background thread that updates the spinner display."""
+        """Print workflow start - no animation."""
+        line = f"executing {self.workflow_name} [{self.current}/{self.total}]"
+        print(line)
+        # Just wait until stop() is called
         while not self._stop:
-            elapsed = int(time.time() - self.start_time)
-            mins, secs = divmod(elapsed, 60)
-            char = self._chars[self._idx % len(self._chars)]
-            line = f"\r[{mins:02d}:{secs:02d}] executing {self.workflow_name}.... [{self.current}/{self.total}]  {char}"
-            # Pad with spaces to overwrite previous content
-            padded = line.ljust(self._last_line_len)
-            self._last_line_len = len(line)
-            sys.stdout.write(padded)
-            sys.stdout.flush()
-            self._idx += 1
             time.sleep(0.1)
 
     def stop(self, status: str) -> None:
-        """Stop the spinner and print final status.
-
-        Args:
-            status: Final status to display (e.g., "PASS", "FAIL")
-        """
+        """Stop and print final status."""
         self._stop = True
         if self._thread:
             self._thread.join(timeout=0.3)
         elapsed = int(time.time() - self.start_time)
         mins, secs = divmod(elapsed, 60)
-        # Clear line and print final status
-        final_line = f"\r[{mins:02d}:{secs:02d}] {self.workflow_name} [{self.current}/{self.total}] - {status}"
-        padded = final_line.ljust(self._last_line_len)
-        sys.stdout.write(padded + "\n")
-        sys.stdout.flush()
+        print(f"[{mins:02d}:{secs:02d}] {self.workflow_name} [{self.current}/{self.total}] - {status}")
 from .comfy_env import get_cuda_packages, get_node_reqs
 from .platform import get_platform, TestPlatform, TestPaths
 from ..comfyui.server import ComfyUIServer

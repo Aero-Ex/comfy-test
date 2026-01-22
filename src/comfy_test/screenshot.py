@@ -455,16 +455,46 @@ class WorkflowScreenshot:
         # Wait for graph to render before execution
         self._page.wait_for_timeout(2000)
 
-        # Queue the workflow - just call queuePrompt() and wait
+        # Inject WebSocket listener to track execution completion
+        self._page.evaluate("""
+            window._executionComplete = false;
+            window._executionError = null;
+
+            if (window.app && window.app.api && window.app.api.socket) {
+                const origOnMessage = window.app.api.socket.onmessage;
+                window.app.api.socket.onmessage = function(event) {
+                    if (origOnMessage) {
+                        try { origOnMessage.call(this, event); } catch(e) {}
+                    }
+                    if (event && typeof event.data === 'string') {
+                        try {
+                            const msg = JSON.parse(event.data);
+                            if (msg && msg.type === 'execution_success') {
+                                window._executionComplete = true;
+                            } else if (msg && msg.type === 'execution_error') {
+                                window._executionError = msg.data;
+                                window._executionComplete = true;
+                            }
+                        } catch (e) {}
+                    }
+                };
+            }
+        """)
+
+        # Queue the workflow
         self._log("  Queuing workflow for execution...")
         self._page.evaluate("window.app.queuePrompt()")
 
-        # Wait for "X job completed" notification to appear (indicates execution done)
+        # Wait for WebSocket execution_success/error message
         self._log("  Waiting for execution to complete...")
-        try:
-            self._page.wait_for_selector('text=/\\d+ job completed/i', timeout=timeout * 1000)
-        except Exception:
-            pass  # Continue even if not found - might have already disappeared
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            complete = self._page.evaluate("window._executionComplete")
+            if complete:
+                break
+            self._page.wait_for_timeout(500)
+        else:
+            self._log("  Warning: Timeout waiting for execution, proceeding anyway")
 
         # Extra wait for previews to fully render
         self._page.wait_for_timeout(wait_after_completion_ms)
@@ -919,25 +949,25 @@ class WorkflowScreenshot:
             total_time = round(time.time() - capture_start, 2)
             self._log(f"  Captured {len(temp_frames)} frames over {total_time}s")
 
-            # Dedupe and convert to WebP, keeping metadata
+            # Dedupe and convert to JPEG, keeping metadata
             last_hash = None
-            webp_num = 0
+            frame_num = 0
             frame_metadata = []
             for temp_path, timestamp, log_snap in temp_frames:
                 img = Image.open(temp_path)
                 h = _image_hash(img)
 
                 if h != last_hash:
-                    # Save as WebP
-                    webp_path = output_dir / f"frame_{webp_num:03d}.webp"
-                    img.save(webp_path, "WEBP", quality=webp_quality)
-                    frame_paths.append(webp_path)
+                    # Save as JPEG
+                    jpg_path = output_dir / f"frame_{frame_num:03d}.jpg"
+                    img.save(jpg_path, "JPEG", quality=webp_quality)
+                    frame_paths.append(jpg_path)
                     frame_metadata.append({
-                        "file": webp_path.name,
+                        "file": jpg_path.name,
                         "time": timestamp,
                         "log": log_snap,
                     })
-                    webp_num += 1
+                    frame_num += 1
                     last_hash = h
 
                 img.close()
@@ -973,6 +1003,18 @@ class WorkflowScreenshot:
                     # Embed workflow metadata into PNG
                     self._embed_workflow(tmp_path, final_screenshot_path, workflow)
                     self._log(f"  Saved high-quality screenshot: {final_screenshot_path.name}")
+
+                    # Also save as final frame in video folder
+                    final_frame_path = output_dir / f"frame_{frame_num:03d}.jpg"
+                    img = Image.open(final_screenshot_path)
+                    img.save(final_frame_path, "JPEG", quality=webp_quality)
+                    img.close()
+                    frame_paths.append(final_frame_path)
+                    frame_metadata.append({
+                        "file": final_frame_path.name,
+                        "time": time.time() - capture_start,
+                        "log": "Final screenshot",
+                    })
 
                 finally:
                     if tmp_path.exists():
