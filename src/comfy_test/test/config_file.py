@@ -140,7 +140,6 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
 
     Expected format:
         [test]
-        name = "MyNode"
         comfyui_version = "latest"
         python_version = "3.10"
         timeout = 300
@@ -186,13 +185,15 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
         )
 
     # Get basic test config
-    name = test_section.get("name", base_dir.name)
+    name = base_dir.name  # Always use directory name
     comfyui_version = test_section.get("comfyui_version", "latest")
     python_version = test_section.get("python_version")  # None = random selection
-    timeout = test_section.get("timeout", 300)
+    timeout = 600  # Fixed timeout for setup operations
 
-    # Parse levels - default to all levels
-    levels_raw = test_section.get("levels", ["syntax", "install", "registration", "instantiation", "static_capture", "execution"])
+    # Parse levels - default to all levels, supports "all" or list
+    levels_raw = test_section.get("levels", ["syntax", "install", "registration", "instantiation", "static_capture", "validation", "execution"])
+    if levels_raw == "all":
+        levels_raw = ["syntax", "install", "registration", "instantiation", "static_capture", "validation", "execution"]
     levels = [TestLevel(l) for l in levels_raw]
 
     # Parse platforms section
@@ -247,48 +248,56 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
 def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConfig:
     """Parse workflow configuration section.
 
-    Supports:
-      - run = [...] or run = "all" - workflows to execute
-      - screenshot = [...] or screenshot = "all" - workflows to screenshot
-        (static_capture level: static only; execution level: with outputs if also in run)
-      - Legacy format: files = [...] → maps to run
-      - Legacy format: file = "..." → maps to run
+    All workflows in workflows/ folder are auto-discovered and tested.
+    Screenshots are always taken. Workflows run in alphabetical order.
 
-    When "all" is specified, auto-discovers all *.json files in workflows/ directory.
+    Supports:
+      - gpu = "all" or gpu = [...] - workflows requiring GPU for execution
     """
-    run = []
-    screenshot = []
-    files = []
+    workflows_dir = base_dir / "workflows"
 
     # Helper to resolve "all" or list of paths
-    # Workflows are always resolved relative to the workflows/ folder
     def resolve_workflows(value):
-        workflows_dir = base_dir / "workflows"
         if value == "all":
             if workflows_dir.exists():
                 return sorted(workflows_dir.glob("*.json"))
             return []
         return [workflows_dir / f for f in value]
 
-    # Parse run and screenshot
+    # Auto-discover all workflows (alphabetical order)
+    workflows = resolve_workflows("all")
+
+    # Parse gpu option - supports "all" or list
+    gpu = []
+    if "gpu" in data:
+        gpu = resolve_workflows(data["gpu"])
+
+    # Legacy format support (backwards compatibility)
+    run = []
+    screenshot = []
+    files = []
+    file_path = None
+
     if "run" in data:
         run = resolve_workflows(data["run"])
+        # If explicit run list provided, use it instead of auto-discover
+        if run:
+            workflows = run
     if "screenshot" in data:
         screenshot = resolve_workflows(data["screenshot"])
-
-    # Legacy format: files = [...] → maps to run
     if "files" in data:
-        workflows_dir = base_dir / "workflows"
         files = [workflows_dir / f for f in data["files"]]
-
-    # Legacy format: file = "..." → maps to run
-    file_path = None
+        if files and not workflows:
+            workflows = files
     if "file" in data:
-        workflows_dir = base_dir / "workflows"
         file_path = workflows_dir / data["file"]
+        if file_path and not workflows:
+            workflows = [file_path]
 
-    # Only pass timeout if explicitly set in config
+    # Build kwargs
     kwargs = {
+        "workflows": workflows,
+        "gpu": gpu,
         "run": run,
         "screenshot": screenshot,
         "files": files,

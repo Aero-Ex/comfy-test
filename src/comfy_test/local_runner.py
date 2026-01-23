@@ -11,6 +11,19 @@ from typing import Callable, Optional, List, Tuple
 
 ACT_IMAGE = "catthehacker/ubuntu:act-22.04"
 
+
+def ensure_gitignore(node_dir: Path, pattern: str = ".comfy-test-logs/"):
+    """Add pattern to .gitignore if not already present."""
+    gitignore = node_dir / ".gitignore"
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if pattern.rstrip('/') not in content:
+            with open(gitignore, "a") as f:
+                f.write(f"\n# comfy-test output\n{pattern}\n")
+    else:
+        gitignore.write_text(f"# comfy-test output\n{pattern}\n")
+
+
 # Patterns to detect step transitions in act output
 STEP_START = re.compile(r'^Run (?:Main |Post )?(.+)$')
 STEP_SUCCESS = re.compile(r'^Success - (?:Main |Post )?(.+?) \[')
@@ -23,7 +36,7 @@ def _gitignore_filter(base_dir: Path):
 
     # Always ignore these (essential for clean copy)
     # Note: .git is NOT ignored - workflow needs it for checkout step
-    always_ignore = {'__pycache__', '.comfy-test', '.comfy-test-env'}
+    always_ignore = {'__pycache__', '.comfy-test', '.comfy-test-env', '.comfy-test-logs'}
 
     # Parse .gitignore if it exists
     gitignore_patterns = []
@@ -125,6 +138,9 @@ def run_local(
         Exit code (0 = success)
     """
     log = log_callback or print
+
+    # Auto-add .comfy-test-logs to .gitignore
+    ensure_gitignore(node_dir, ".comfy-test-logs/")
 
     # Verify act is installed
     if not shutil.which("act"):

@@ -1,9 +1,9 @@
 Setup Instructions
 ==================
 
-1. Copy the files into your repo:
-   - Copy "comfy-test.toml" to your repo root
-   - Copy "github" folder to your repo root and rename it to ".github"
+1. Run "comfy-test init" in your repo:
+   - Copies "comfy-test.toml" to your repo root
+   - Copies "github" folder to your repo root and renames it to ".github"
 
 2. Enable workflow write permissions:
    - Go to Settings → Actions → General

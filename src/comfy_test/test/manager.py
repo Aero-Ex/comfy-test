@@ -66,6 +66,40 @@ def _get_workflow_timeout(config_timeout: int) -> int:
     return config_timeout
 
 
+def get_hardware_info() -> dict:
+    """Get current hardware information for results tracking."""
+    import platform
+    import subprocess
+
+    info = {
+        "os": platform.platform(),
+        "cpu": platform.processor() or "Unknown",
+    }
+
+    # Get better CPU info on Linux
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    info["cpu"] = line.split(":")[1].strip()
+                    break
+    except (FileNotFoundError, PermissionError):
+        pass
+
+    # Get GPU info
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            info["gpu"] = result.stdout.strip().split("\n")[0]
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    return info
+
+
 @dataclass
 class TestState:
     """State persisted between CLI invocations for multi-step CI.
@@ -128,6 +162,20 @@ class TestResult:
         return f"TestResult({self.platform}: {status})"
 
 
+def has_gpu() -> bool:
+    """Check if a GPU is available for CUDA operations.
+
+    Returns:
+        True if nvidia-smi succeeds (GPU available), False otherwise
+    """
+    import subprocess
+    try:
+        result = subprocess.run(["nvidia-smi"], capture_output=True, timeout=10)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
 class TestManager:
     """Orchestrates installation tests across platforms.
 
@@ -146,7 +194,8 @@ class TestManager:
     # All possible levels in order
     ALL_LEVELS = [
         TestLevel.SYNTAX, TestLevel.INSTALL, TestLevel.REGISTRATION,
-        TestLevel.INSTANTIATION, TestLevel.STATIC_CAPTURE, TestLevel.EXECUTION
+        TestLevel.INSTANTIATION, TestLevel.STATIC_CAPTURE, TestLevel.VALIDATION,
+        TestLevel.EXECUTION
     ]
 
     def __init__(
@@ -233,7 +282,8 @@ class TestManager:
         requested_levels = self.config.levels
         if level:
             order = [TestLevel.SYNTAX, TestLevel.INSTALL, TestLevel.REGISTRATION,
-                     TestLevel.INSTANTIATION, TestLevel.STATIC_CAPTURE, TestLevel.EXECUTION]
+                     TestLevel.INSTANTIATION, TestLevel.STATIC_CAPTURE, TestLevel.VALIDATION,
+                     TestLevel.EXECUTION]
             max_idx = order.index(level)
             requested_levels = [l for l in requested_levels if order.index(l) <= max_idx]
 
@@ -264,11 +314,12 @@ class TestManager:
             # Check if we need install level for later levels
             needs_install = any(l in config_levels for l in [
                 TestLevel.INSTALL, TestLevel.REGISTRATION,
-                TestLevel.INSTANTIATION, TestLevel.STATIC_CAPTURE, TestLevel.EXECUTION
+                TestLevel.INSTANTIATION, TestLevel.STATIC_CAPTURE, TestLevel.VALIDATION,
+                TestLevel.EXECUTION
             ])
-            run_workflows = self.config.workflow.run
+            workflows = self.config.workflow.workflows
 
-            if not needs_install and not run_workflows:
+            if not needs_install and not workflows:
                 # Only syntax was requested and no workflows
                 self._log(f"\n{platform_name}: PASSED")
                 return TestResult(platform_name, True)
@@ -310,7 +361,7 @@ class TestManager:
                 # Check if we need server for remaining levels
                 needs_server = any(l in config_levels for l in [
                     TestLevel.REGISTRATION, TestLevel.INSTANTIATION,
-                    TestLevel.EXECUTION
+                    TestLevel.VALIDATION, TestLevel.EXECUTION
                 ])
 
                 if not needs_server:
@@ -373,13 +424,13 @@ class TestManager:
                     # === STATIC_CAPTURE LEVEL ===
                     if TestLevel.STATIC_CAPTURE not in config_levels:
                         self._log_level_skip(TestLevel.STATIC_CAPTURE)
-                    elif not self.config.workflow.screenshot:
+                    elif not self.config.workflow.workflows:
                         self._log_level_start(TestLevel.STATIC_CAPTURE, TestLevel.STATIC_CAPTURE in requested_levels)
                         self._log("No workflows configured for static capture")
                         self._log_level_done(TestLevel.STATIC_CAPTURE, "PASSED (no workflows)")
                     else:
                         self._log_level_start(TestLevel.STATIC_CAPTURE, TestLevel.STATIC_CAPTURE in requested_levels)
-                        total_screenshots = len(self.config.workflow.screenshot)
+                        total_screenshots = len(self.config.workflow.workflows)
                         self._log(f"Capturing {total_screenshots} static screenshot(s)...")
 
                         try:
@@ -392,7 +443,7 @@ class TestManager:
                             ws = WorkflowScreenshot(server.base_url, log_callback=self._log)
                             ws.start()
                             try:
-                                for idx, workflow_file in enumerate(self.config.workflow.screenshot, 1):
+                                for idx, workflow_file in enumerate(self.config.workflow.workflows, 1):
                                     self._log(f"  [{idx}/{total_screenshots}] STATIC {workflow_file.name}")
                                     output_path = screenshots_dir / f"{workflow_file.stem}.png"
                                     ws.capture(self._resolve_workflow_path(workflow_file), output_path=output_path)
@@ -404,10 +455,51 @@ class TestManager:
                             self._log("WARNING: Screenshots disabled (playwright not installed)")
                             self._log_level_done(TestLevel.STATIC_CAPTURE, "SKIPPED (no playwright)")
 
+                    # === VALIDATION LEVEL ===
+                    if TestLevel.VALIDATION not in config_levels:
+                        self._log_level_skip(TestLevel.VALIDATION)
+                    elif not self.config.workflow.workflows:
+                        self._log_level_start(TestLevel.VALIDATION, TestLevel.VALIDATION in requested_levels)
+                        self._log("No workflows to validate")
+                        self._log_level_done(TestLevel.VALIDATION, "PASSED (no workflows)")
+                    else:
+                        self._log_level_start(TestLevel.VALIDATION, TestLevel.VALIDATION in requested_levels)
+                        total_workflows = len(self.config.workflow.workflows)
+                        self._log(f"Validating {total_workflows} workflow(s)...")
+
+                        try:
+                            from ..screenshot import WorkflowScreenshot, check_dependencies
+                            check_dependencies()
+
+                            ws = WorkflowScreenshot(server.base_url, log_callback=self._log)
+                            ws.start()
+                            validation_errors = []
+                            try:
+                                for idx, workflow_file in enumerate(self.config.workflow.workflows, 1):
+                                    self._log(f"  [{idx}/{total_workflows}] Validating {workflow_file.name}")
+                                    try:
+                                        ws.validate_workflow(self._resolve_workflow_path(workflow_file))
+                                        self._log(f"    OK")
+                                    except Exception as e:
+                                        self._log(f"    FAILED: {e}")
+                                        validation_errors.append((workflow_file.name, str(e)))
+                            finally:
+                                ws.stop()
+
+                            if validation_errors:
+                                raise TestError(
+                                    f"Workflow validation failed ({len(validation_errors)} error(s))",
+                                    "\n".join(f"  - {name}: {err}" for name, err in validation_errors)
+                                )
+                            self._log_level_done(TestLevel.VALIDATION, "PASSED")
+                        except ImportError:
+                            self._log("WARNING: Validation requires playwright")
+                            self._log_level_done(TestLevel.VALIDATION, "SKIPPED (no playwright)")
+
                     # === EXECUTION LEVEL ===
                     if TestLevel.EXECUTION not in config_levels:
                         self._log_level_skip(TestLevel.EXECUTION)
-                    elif not self.config.workflow.run:
+                    elif not self.config.workflow.workflows:
                         self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
                         self._log("No workflows configured for execution")
                         self._log_level_done(TestLevel.EXECUTION, "PASSED (no workflows)")
@@ -417,16 +509,18 @@ class TestManager:
                         self._log_level_done(TestLevel.EXECUTION, "SKIPPED")
                     else:
                         self._log_level_start(TestLevel.EXECUTION, TestLevel.EXECUTION in requested_levels)
-                        total_workflows = len(self.config.workflow.run)
 
-                        # Determine which workflows need screenshots (intersection of run and screenshot lists)
-                        screenshot_set = set(self.config.workflow.screenshot or [])
-                        screenshot_count = len([w for w in self.config.workflow.run if w in screenshot_set])
+                        # Check GPU availability for GPU-requiring workflows
+                        gpu_available = has_gpu()
+                        gpu_workflows = set(self.config.workflow.gpu or [])
+                        if gpu_workflows:
+                            if gpu_available:
+                                self._log("GPU detected - will execute GPU workflows")
+                            else:
+                                self._log("No GPU detected - GPU workflows will be skipped")
 
-                        if screenshot_count:
-                            self._log(f"Running {total_workflows} workflow(s) ({screenshot_count} with videos)...")
-                        else:
-                            self._log(f"Running {total_workflows} workflow(s)...")
+                        total_workflows = len(self.config.workflow.workflows)
+                        self._log(f"Running {total_workflows} workflow(s) (all with videos)...")
 
                         # Create a log capture wrapper that writes to both main log and current workflow log
                         current_workflow_log = []
@@ -435,34 +529,35 @@ class TestManager:
                             self._log(msg)
                             current_workflow_log.append(msg)
 
-                        # Initialize browser only if any workflow needs screenshots/videos
+                        # Always initialize browser for screenshots/videos
                         ws = None
                         screenshots_dir = None
                         videos_dir = None
-                        if screenshot_set:
-                            try:
-                                from ..screenshot import WorkflowScreenshot, check_dependencies
-                                check_dependencies()
-                                ws = WorkflowScreenshot(server.base_url, log_callback=capture_log)
-                                ws.start()
-                                # Create screenshots and videos output directories
-                                screenshots_dir = self.node_dir / ".comfy-test" / "screenshots"
-                                screenshots_dir.mkdir(parents=True, exist_ok=True)
-                                videos_dir = self.node_dir / ".comfy-test" / "videos"
-                                videos_dir.mkdir(parents=True, exist_ok=True)
-                            except ImportError:
-                                self._log("WARNING: Screenshots disabled (playwright not installed)")
-                                screenshot_set = set()  # Disable screenshots
+                        try:
+                            from ..screenshot import WorkflowScreenshot, check_dependencies
+                            check_dependencies()
+                            ws = WorkflowScreenshot(server.base_url, log_callback=capture_log)
+                            ws.start()
+                            # Create screenshots and videos output directories
+                            screenshots_dir = self.node_dir / ".comfy-test" / "screenshots"
+                            screenshots_dir.mkdir(parents=True, exist_ok=True)
+                            videos_dir = self.node_dir / ".comfy-test" / "videos"
+                            videos_dir.mkdir(parents=True, exist_ok=True)
+                        except ImportError:
+                            self._log("WARNING: Screenshots disabled (playwright not installed)")
 
                         # Initialize results tracking
                         results = []
                         logs_dir = self.node_dir / ".comfy-test" / "logs"
                         logs_dir.mkdir(parents=True, exist_ok=True)
 
+                        # Get hardware info once for all workflows that run on this machine
+                        hardware = get_hardware_info()
+
                         try:
                             runner = WorkflowRunner(api, capture_log)
                             all_errors = []
-                            for idx, workflow_file in enumerate(self.config.workflow.run, 1):
+                            for idx, workflow_file in enumerate(self.config.workflow.workflows, 1):
                                 # Reset workflow log for this workflow
                                 current_workflow_log.clear()
                                 # Register capture_log to receive [ComfyUI] output
@@ -471,13 +566,26 @@ class TestManager:
                                 status = "pass"
                                 error_msg = None
 
+                                # Check if this is a GPU workflow and we don't have GPU
+                                is_gpu_workflow = workflow_file in gpu_workflows
+                                if is_gpu_workflow and not gpu_available:
+                                    self._log(f"  [{idx}/{total_workflows}] SKIPPED (GPU required) {workflow_file.name}")
+                                    results.append({
+                                        "name": workflow_file.stem,
+                                        "status": "skipped",
+                                        "duration_seconds": 0,
+                                        "error": "GPU required but not available",
+                                        "hardware": None,
+                                    })
+                                    continue
+
                                 # Start progress spinner
                                 spinner = ProgressSpinner(workflow_file.name, idx, total_workflows)
                                 spinner.start()
 
                                 try:
-                                    if workflow_file in screenshot_set and ws and videos_dir:
-                                        # Execute via browser + capture video frames
+                                    if ws and videos_dir:
+                                        # Execute via browser + capture video frames (always)
                                         workflow_video_dir = videos_dir / workflow_file.stem
                                         final_screenshot_path = screenshots_dir / f"{workflow_file.stem}_executed.png"
                                         frames = ws.capture_execution_frames(
@@ -490,7 +598,7 @@ class TestManager:
                                         )
                                         capture_log(f"    Captured {len(frames)} video frames")
                                     else:
-                                        # Execute via API only (faster)
+                                        # Execute via API only (fallback if no playwright)
                                         result = runner.run_workflow(
                                             workflow_file,
                                             timeout=_get_workflow_timeout(self.config.workflow.timeout),
@@ -516,7 +624,8 @@ class TestManager:
                                     "name": workflow_file.stem,
                                     "status": status,
                                     "duration_seconds": round(duration, 2),
-                                    "error": error_msg
+                                    "error": error_msg,
+                                    "hardware": hardware,
                                 })
 
                                 # Save per-workflow log (copy the list since we clear it)
@@ -594,9 +703,9 @@ class TestManager:
                 elif test_level == TestLevel.INSTANTIATION:
                     self._log("  Test node constructors")
                 elif test_level == TestLevel.EXECUTION:
-                    if self.config.workflow.run:
-                        self._log(f"  Run {len(self.config.workflow.run)} workflow(s):")
-                        for wf in self.config.workflow.run:
+                    if self.config.workflow.workflows:
+                        self._log(f"  Run {len(self.config.workflow.workflows)} workflow(s):")
+                        for wf in self.config.workflow.workflows:
                             self._log(f"    - {wf}")
                     else:
                         self._log("  No workflows configured for execution")
@@ -701,12 +810,11 @@ class TestManager:
     def _get_workflow_files(self) -> List[Path]:
         """Get workflow files configured for execution.
 
-        Note: Validation always auto-discovers from workflows/ directory.
-        This method returns files configured in config.workflow.run.
+        Returns all discovered workflows from the workflows/ directory.
 
-        Deprecated: Use config.workflow.run directly instead.
+        Deprecated: Use config.workflow.workflows directly instead.
         """
-        return self.config.workflow.run
+        return self.config.workflow.workflows
 
     def _test_instantiation(
         self,
@@ -1061,10 +1169,10 @@ print(json.dumps(result))
                     self._log(f"All {len(registered_nodes)} node(s) instantiated successfully!")
 
                 elif level == TestLevel.STATIC_CAPTURE:
-                    if not self.config.workflow.screenshot:
+                    if not self.config.workflow.workflows:
                         self._log("No workflows configured for static capture")
                     else:
-                        total_screenshots = len(self.config.workflow.screenshot)
+                        total_screenshots = len(self.config.workflow.workflows)
                         self._log(f"Capturing {total_screenshots} static screenshot(s)...")
 
                         try:
@@ -1077,7 +1185,7 @@ print(json.dumps(result))
                             ws = WorkflowScreenshot(server.base_url, log_callback=self._log)
                             ws.start()
                             try:
-                                for idx, workflow_file in enumerate(self.config.workflow.screenshot, 1):
+                                for idx, workflow_file in enumerate(self.config.workflow.workflows, 1):
                                     self._log(f"  [{idx}/{total_screenshots}] STATIC {workflow_file.name}")
                                     output_path = screenshots_dir / f"{workflow_file.stem}.png"
                                     ws.capture(self._resolve_workflow_path(workflow_file), output_path=output_path)
@@ -1087,21 +1195,22 @@ print(json.dumps(result))
                             self._log("WARNING: Screenshots disabled (playwright not installed)")
 
                 elif level == TestLevel.EXECUTION:
-                    if not self.config.workflow.run:
+                    if not self.config.workflow.workflows:
                         self._log("No workflows configured for execution")
                     elif platform_config.skip_workflow:
                         self._log("Skipped per platform config")
                     else:
-                        total_workflows = len(self.config.workflow.run)
+                        # Check GPU availability for GPU-requiring workflows
+                        gpu_available = has_gpu()
+                        gpu_workflows = set(self.config.workflow.gpu or [])
+                        if gpu_workflows:
+                            if gpu_available:
+                                self._log("GPU detected - will execute GPU workflows")
+                            else:
+                                self._log("No GPU detected - GPU workflows will be skipped")
 
-                        # Determine which workflows need screenshots (intersection of run and screenshot lists)
-                        screenshot_set = set(self.config.workflow.screenshot or [])
-                        screenshot_count = len([w for w in self.config.workflow.run if w in screenshot_set])
-
-                        if screenshot_count:
-                            self._log(f"Running {total_workflows} workflow(s) ({screenshot_count} with videos)...")
-                        else:
-                            self._log(f"Running {total_workflows} workflow(s)...")
+                        total_workflows = len(self.config.workflow.workflows)
+                        self._log(f"Running {total_workflows} workflow(s) (all with videos)...")
 
                         # Create a log capture wrapper that writes to both main log and current workflow log
                         current_workflow_log = []
@@ -1110,34 +1219,35 @@ print(json.dumps(result))
                             self._log(msg)
                             current_workflow_log.append(msg)
 
-                        # Initialize browser only if any workflow needs screenshots/videos
+                        # Always initialize browser for screenshots/videos
                         ws = None
                         screenshots_dir = None
                         videos_dir = None
-                        if screenshot_set:
-                            try:
-                                from ..screenshot import WorkflowScreenshot, check_dependencies
-                                check_dependencies()
-                                ws = WorkflowScreenshot(server.base_url, log_callback=capture_log)
-                                ws.start()
-                                # Create screenshots and videos output directories
-                                screenshots_dir = self.node_dir / ".comfy-test" / "screenshots"
-                                screenshots_dir.mkdir(parents=True, exist_ok=True)
-                                videos_dir = self.node_dir / ".comfy-test" / "videos"
-                                videos_dir.mkdir(parents=True, exist_ok=True)
-                            except ImportError:
-                                self._log("WARNING: Screenshots disabled (playwright not installed)")
-                                screenshot_set = set()  # Disable screenshots
+                        try:
+                            from ..screenshot import WorkflowScreenshot, check_dependencies
+                            check_dependencies()
+                            ws = WorkflowScreenshot(server.base_url, log_callback=capture_log)
+                            ws.start()
+                            # Create screenshots and videos output directories
+                            screenshots_dir = self.node_dir / ".comfy-test" / "screenshots"
+                            screenshots_dir.mkdir(parents=True, exist_ok=True)
+                            videos_dir = self.node_dir / ".comfy-test" / "videos"
+                            videos_dir.mkdir(parents=True, exist_ok=True)
+                        except ImportError:
+                            self._log("WARNING: Screenshots disabled (playwright not installed)")
 
                         # Initialize results tracking
                         results = []
                         logs_dir = self.node_dir / ".comfy-test" / "logs"
                         logs_dir.mkdir(parents=True, exist_ok=True)
 
+                        # Get hardware info once for all workflows that run on this machine
+                        hardware = get_hardware_info()
+
                         try:
                             runner = WorkflowRunner(api, capture_log)
                             all_errors = []
-                            for idx, workflow_file in enumerate(self.config.workflow.run, 1):
+                            for idx, workflow_file in enumerate(self.config.workflow.workflows, 1):
                                 # Reset workflow log for this workflow
                                 current_workflow_log.clear()
                                 # Register capture_log to receive [ComfyUI] output
@@ -1146,13 +1256,26 @@ print(json.dumps(result))
                                 status = "pass"
                                 error_msg = None
 
+                                # Check if this is a GPU workflow and we don't have GPU
+                                is_gpu_workflow = workflow_file in gpu_workflows
+                                if is_gpu_workflow and not gpu_available:
+                                    self._log(f"  [{idx}/{total_workflows}] SKIPPED (GPU required) {workflow_file.name}")
+                                    results.append({
+                                        "name": workflow_file.stem,
+                                        "status": "skipped",
+                                        "duration_seconds": 0,
+                                        "error": "GPU required but not available",
+                                        "hardware": None,
+                                    })
+                                    continue
+
                                 # Start progress spinner
                                 spinner = ProgressSpinner(workflow_file.name, idx, total_workflows)
                                 spinner.start()
 
                                 try:
-                                    if workflow_file in screenshot_set and ws and videos_dir:
-                                        # Execute via browser + capture video frames
+                                    if ws and videos_dir:
+                                        # Execute via browser + capture video frames (always)
                                         workflow_video_dir = videos_dir / workflow_file.stem
                                         final_screenshot_path = screenshots_dir / f"{workflow_file.stem}_executed.png"
                                         frames = ws.capture_execution_frames(
@@ -1165,7 +1288,7 @@ print(json.dumps(result))
                                         )
                                         capture_log(f"    Captured {len(frames)} video frames")
                                     else:
-                                        # Execute via API only (faster)
+                                        # Execute via API only (fallback if no playwright)
                                         result = runner.run_workflow(
                                             workflow_file,
                                             timeout=_get_workflow_timeout(self.config.workflow.timeout),
@@ -1191,7 +1314,8 @@ print(json.dumps(result))
                                     "name": workflow_file.stem,
                                     "status": status,
                                     "duration_seconds": round(duration, 2),
-                                    "error": error_msg
+                                    "error": error_msg,
+                                    "hardware": hardware,
                                 })
 
                                 # Save per-workflow log (copy the list since we clear it)

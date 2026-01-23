@@ -206,8 +206,7 @@ def generate_html_report(output_dir: Path, repo_name: Optional[str] = None) -> P
         if repo_name in (".", ".comfy-test"):
             repo_name = output_dir.parent.parent.name
 
-    system_info = _get_system_info()
-    html_content = _render_report(results, screenshots, log_contents, repo_name, video_data, system_info)
+    html_content = _render_report(results, screenshots, log_contents, repo_name, video_data)
 
     output_file = output_dir / "index.html"
     output_file.write_text(html_content)
@@ -220,7 +219,6 @@ def _render_report(
     log_contents: Dict[str, str],
     repo_name: str,
     video_data: Optional[Dict[str, Any]] = None,
-    system_info: Optional[Dict[str, str]] = None,
 ) -> str:
     """Render the HTML report from results data.
 
@@ -230,12 +228,10 @@ def _render_report(
         log_contents: Dict mapping workflow name to log content
         repo_name: Repository name for the header
         video_data: Dict mapping workflow name to metadata (frames with timestamps/logs)
-        system_info: Dict with 'cpu', 'gpu', 'os' keys
 
     Returns:
         Complete HTML document as string
     """
-    system_info = system_info or {}
     video_data = video_data or {}
     summary = results.get("summary", {})
     total = summary.get("total", 0)
@@ -602,6 +598,13 @@ def _render_report(
             color: #fff;
         }}
 
+        .lightbox-hardware {{
+            display: block;
+            font-size: 0.8rem;
+            color: #888;
+            margin-top: 0.25rem;
+        }}
+
         .lightbox-meta {{
             display: flex;
             gap: 1rem;
@@ -785,7 +788,7 @@ def _render_report(
 <body>
     <header>
         <h1><a href="https://github.com/PozzettiAndrea/{repo_name}">{repo_name}</a> Test Results</h1>
-        <p class="meta">{timestamp_display} | {system_info.get('os', platform)} | CPU: {system_info.get('cpu', 'Unknown')} | GPU: {system_info.get('gpu', 'None')}</p>
+        <p class="meta">{timestamp_display}</p>
     </header>
 
     <div class="container">
@@ -821,7 +824,10 @@ def _render_report(
                 </div>
             </div>
             <div class="lightbox-info">
-                <span class="lightbox-title" id="lightbox-title"></span>
+                <div>
+                    <span class="lightbox-title" id="lightbox-title"></span>
+                    <span class="lightbox-hardware" id="lightbox-hardware"></span>
+                </div>
                 <div class="lightbox-meta">
                     <span class="lightbox-badge" id="lightbox-badge"></span>
                     <span class="lightbox-duration" id="lightbox-duration"></span>
@@ -854,10 +860,10 @@ def _render_report(
 
         function openLightboxByName(name) {{
             const w = workflowData[name];
-            if (w) openLightbox(w.src, w.title, w.status, w.duration, w.log);
+            if (w) openLightbox(w.src, w.title, w.status, w.duration, w.log, w.hardware);
         }}
 
-        function openLightbox(src, title, status, duration, logContent) {{
+        function openLightbox(src, title, status, duration, logContent, hardware) {{
             document.getElementById('lightbox-img').src = src;
             document.getElementById('lightbox-title').textContent = title;
             currentWorkflow = title;
@@ -869,6 +875,18 @@ def _render_report(
 
             document.getElementById('lightbox-duration').textContent = duration + 's';
             document.getElementById('lightbox-log').textContent = logContent || '(No log available)';
+
+            // Display hardware info
+            const hwEl = document.getElementById('lightbox-hardware');
+            if (hardware) {{
+                const parts = [];
+                if (hardware.os) parts.push(hardware.os);
+                if (hardware.cpu) parts.push(hardware.cpu);
+                if (hardware.gpu) parts.push(hardware.gpu);
+                hwEl.textContent = parts.join(' | ');
+            }} else {{
+                hwEl.textContent = status === 'skipped' ? '(Did not run on this machine)' : '';
+            }}
 
             // Setup video player if video data exists
             const data = videoData[title];
@@ -1009,7 +1027,7 @@ def _render_report(
             const hash = decodeURIComponent(window.location.hash.slice(1));
             if (hash && workflowData[hash]) {{
                 const w = workflowData[hash];
-                openLightbox(w.src, w.title, w.status, w.duration, w.log);
+                openLightbox(w.src, w.title, w.status, w.duration, w.log, w.hardware);
             }}
         }}
 
@@ -1066,6 +1084,7 @@ def _render_workflow_cards(
         name = w.get("name", "unknown")
         status = w.get("status", "unknown")
         duration = w.get("duration_seconds", 0)
+        hardware = w.get("hardware")  # Per-workflow hardware info
         screenshot_file = screenshots.get(name, "")
         log_content = log_contents.get(name, "")
 
@@ -1076,7 +1095,8 @@ def _render_workflow_cards(
             'title': name,
             'status': status,
             'duration': f'{duration:.2f}',
-            'log': log_content
+            'log': log_content,
+            'hardware': hardware,
         }
 
         # Add failed class for red border

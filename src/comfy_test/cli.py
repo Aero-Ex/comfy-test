@@ -1,6 +1,7 @@
 """CLI for comfy-test."""
 
 import argparse
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -56,7 +57,7 @@ def cmd_run(args) -> int:
     # Handle --local mode (run via act/Docker)
     if args.local:
         from .local_runner import run_local
-        output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / ".comfy-test-output"
+        output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / ".comfy-test-logs"
         return run_local(
             node_dir=Path.cwd(),
             output_dir=output_dir,
@@ -64,6 +65,14 @@ def cmd_run(args) -> int:
             gpu=args.gpu,
             log_callback=print,
         )
+
+    # Require CI environment for direct execution
+    if not os.environ.get('GITHUB_ACTIONS') and not os.environ.get('ACT'):
+        print("Error: Direct execution requires CI environment (GITHUB_ACTIONS or ACT).", file=sys.stderr)
+        print(file=sys.stderr)
+        print("For local testing, use:", file=sys.stderr)
+        print("  comfy-test run --local    # Runs in Docker via act", file=sys.stderr)
+        return 1
 
     try:
         # Load config
@@ -197,19 +206,16 @@ def cmd_info(args) -> int:
         print()
         print("Workflows:")
         print(f"  Timeout: {config.workflow.timeout}s")
-        if config.workflow.run:
-            print(f"  Run (execution): {len(config.workflow.run)} workflow(s)")
-            for wf in config.workflow.run:
-                print(f"    - {wf}")
+        if config.workflow.workflows:
+            print(f"  Discovered: {len(config.workflow.workflows)} workflow(s)")
+            for wf in config.workflow.workflows:
+                print(f"    - {wf.name}")
         else:
-            print("  Run (execution): none configured")
-        if config.workflow.screenshot:
-            print(f"  Screenshot: {len(config.workflow.screenshot)} workflow(s)")
-            print("    (static_capture: static; execution: with outputs if also in run)")
-            for wf in config.workflow.screenshot:
-                print(f"    - {wf}")
-        else:
-            print("  Screenshot: none configured")
+            print("  Discovered: none")
+        if config.workflow.gpu:
+            print(f"  GPU required: {len(config.workflow.gpu)} workflow(s)")
+            for wf in config.workflow.gpu:
+                print(f"    - {wf.name}")
 
         return 0
 
@@ -277,6 +283,124 @@ def cmd_download_portable(args) -> int:
     return 0
 
 
+def cmd_merge(args) -> int:
+    """Merge results with existing gh-pages."""
+    from .merge import merge_with_gh_pages
+
+    output_dir = Path(args.output_dir)
+    if not output_dir.exists():
+        print(f"Output directory not found: {output_dir}", file=sys.stderr)
+        return 1
+
+    success = merge_with_gh_pages(output_dir, args.repo, log_callback=print)
+    return 0 if success else 1
+
+
+def cmd_publish(args) -> int:
+    """Publish results to gh-pages."""
+    import shutil
+    import subprocess
+    import tempfile
+    from .merge import merge_with_gh_pages
+    from .report import generate_html_report
+
+    results_dir = Path(args.results_dir).expanduser()
+    if not results_dir.exists():
+        print(f"Results directory not found: {results_dir}", file=sys.stderr)
+        return 1
+
+    results_file = results_dir / "results.json"
+    if not results_file.exists():
+        print(f"No results.json found in {results_dir}", file=sys.stderr)
+        return 1
+
+    repo = args.repo
+
+    # Merge if requested (for CPU-only CI runs to preserve GPU results)
+    if args.merge:
+        print("Merging with existing gh-pages results...")
+        merge_with_gh_pages(results_dir, repo, log_callback=print)
+
+    # Generate HTML report
+    print("Generating HTML report...")
+    generate_html_report(results_dir)
+
+    # Push to gh-pages
+    print(f"Publishing to gh-pages for {repo}...")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        gh_pages_dir = Path(tmp) / "gh-pages"
+
+        # Try to clone existing gh-pages branch
+        clone_result = subprocess.run(
+            ["git", "clone", "--depth=1", "--branch=gh-pages",
+             f"https://github.com/{repo}.git", str(gh_pages_dir)],
+            capture_output=True
+        )
+
+        if clone_result.returncode != 0:
+            # No gh-pages branch exists, create empty dir
+            print("No existing gh-pages branch, creating new one...")
+            gh_pages_dir.mkdir(parents=True)
+            subprocess.run(["git", "init"], cwd=gh_pages_dir, capture_output=True)
+            subprocess.run(["git", "checkout", "-b", "gh-pages"], cwd=gh_pages_dir, capture_output=True)
+
+        # Clear old content (except .git)
+        for item in gh_pages_dir.iterdir():
+            if item.name != ".git":
+                if item.is_dir():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+
+        # Copy new content
+        files_to_copy = ["results.json", "index.html"]
+        dirs_to_copy = ["screenshots", "videos", "logs"]
+
+        for f in files_to_copy:
+            src = results_dir / f
+            if src.exists():
+                shutil.copy2(src, gh_pages_dir / f)
+
+        for d in dirs_to_copy:
+            src = results_dir / d
+            if src.exists():
+                shutil.copytree(src, gh_pages_dir / d)
+
+        # Commit and push
+        subprocess.run(["git", "add", "-A"], cwd=gh_pages_dir, check=True)
+
+        # Check if there are changes to commit
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=gh_pages_dir, capture_output=True, text=True
+        )
+        if not status.stdout.strip():
+            print("No changes to publish")
+            return 0
+
+        subprocess.run(
+            ["git", "commit", "-m", "Update test results"],
+            cwd=gh_pages_dir, check=True
+        )
+
+        # Push (requires auth - user should have git credentials configured)
+        push_result = subprocess.run(
+            ["git", "push", "-f", f"https://github.com/{repo}.git", "gh-pages"],
+            cwd=gh_pages_dir
+        )
+
+        if push_result.returncode != 0:
+            print("Push failed. Make sure you have write access to the repo.")
+            print("You may need to set up a GitHub token:")
+            print("  git config --global credential.helper store")
+            print("  # Then push manually once to save credentials")
+            return 1
+
+    print(f"Published to https://{repo.split('/')[0]}.github.io/{repo.split('/')[1]}/")
+    return 0
+
+
 def cmd_screenshot(args) -> int:
     """Generate workflow screenshots."""
     try:
@@ -315,9 +439,9 @@ def cmd_screenshot(args) -> int:
             if not workflow_path.is_absolute():
                 workflow_path = node_dir / workflow_path
             workflow_files = [workflow_path]
-        elif config and config.workflow.screenshot:
-            # Use workflows from config's screenshot list
-            workflow_files = config.workflow.screenshot
+        elif config and config.workflow.workflows:
+            # Use workflows from config
+            workflow_files = config.workflow.workflows
         else:
             # Auto-discover from workflows/ directory
             workflows_dir = node_dir / "workflows"
@@ -671,6 +795,43 @@ def main(args=None) -> int:
         help="Execution timeout in seconds (default: 300, only used with --execute)",
     )
     screenshot_parser.set_defaults(func=cmd_screenshot)
+
+    # merge command
+    merge_parser = subparsers.add_parser(
+        "merge",
+        help="Merge results with existing gh-pages (for combining CI and local GPU runs)",
+    )
+    merge_parser.add_argument(
+        "repo",
+        help="GitHub repo in format 'owner/repo'",
+    )
+    merge_parser.add_argument(
+        "--output-dir", "-o",
+        default=".comfy-test",
+        help="Directory with test results (default: .comfy-test)",
+    )
+    merge_parser.set_defaults(func=cmd_merge)
+
+    # publish command
+    publish_parser = subparsers.add_parser(
+        "publish",
+        help="Publish test results to gh-pages",
+    )
+    publish_parser.add_argument(
+        "results_dir",
+        help="Directory with test results (e.g., ~/logs/SAM3DBody-1445)",
+    )
+    publish_parser.add_argument(
+        "--repo", "-r",
+        required=True,
+        help="GitHub repo in format 'owner/repo'",
+    )
+    publish_parser.add_argument(
+        "--merge", "-m",
+        action="store_true",
+        help="Merge with existing gh-pages (use for CPU-only CI runs to preserve GPU results)",
+    )
+    publish_parser.set_defaults(func=cmd_publish)
 
     parsed_args = parser.parse_args(args)
     return parsed_args.func(parsed_args)

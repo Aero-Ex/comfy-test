@@ -335,6 +335,64 @@ class WorkflowScreenshot:
     def __exit__(self, *args) -> None:
         self.stop()
 
+    def validate_workflow(self, workflow_path: Path) -> None:
+        """Validate a workflow without executing it.
+
+        Loads the workflow into the browser and validates via /validate endpoint.
+        This checks that all nodes can be instantiated with their inputs.
+
+        Args:
+            workflow_path: Path to the workflow JSON file
+
+        Raises:
+            ScreenshotError: If workflow validation fails
+        """
+        if self._page is None:
+            raise ScreenshotError("Browser not started. Call start() or use context manager.")
+
+        # Load workflow JSON
+        try:
+            with open(workflow_path) as f:
+                workflow = json.load(f)
+        except Exception as e:
+            raise ScreenshotError(f"Failed to load workflow: {workflow_path}", str(e))
+
+        # Set server-side setting to prevent Templates panel from showing
+        self._disable_first_run_tutorial()
+
+        # Navigate to ComfyUI
+        try:
+            self._page.goto(self.server_url, wait_until="networkidle")
+        except Exception as e:
+            raise ScreenshotError(f"Failed to connect to ComfyUI at {self.server_url}", str(e))
+
+        # Wait for app to initialize
+        try:
+            self._page.wait_for_function(
+                "typeof window.app !== 'undefined' && window.app.graph !== undefined",
+                timeout=30000,
+            )
+        except Exception as e:
+            raise ScreenshotError("ComfyUI app did not initialize", str(e))
+
+        # Load the workflow via JavaScript
+        workflow_json = json.dumps(workflow)
+        try:
+            self._page.evaluate(f"""
+                (async () => {{
+                    const workflow = {workflow_json};
+                    await window.app.loadGraphData(workflow);
+                }})();
+            """)
+        except Exception as e:
+            raise ScreenshotError("Failed to load workflow into ComfyUI", str(e))
+
+        # Wait for graph to render
+        self._page.wait_for_timeout(1000)
+
+        # Validate using browser's graphToPrompt() conversion
+        self._validate_workflow_in_browser()
+
     def capture(
         self,
         workflow_path: Path,

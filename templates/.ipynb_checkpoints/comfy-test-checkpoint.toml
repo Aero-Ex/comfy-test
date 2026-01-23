@@ -1,11 +1,15 @@
+# comfy-test configuration file
+# All workflows in workflows/ folder are auto-discovered and tested.
+# Screenshots are always taken for all workflows.
+
 [test]
-python_version = "3.11"
-levels = ["syntax", "install", "registration", "instantiation", "execution"]
+# Test levels: "all" or list of specific levels
+# Available: syntax, install, registration, instantiation, static_capture, validation, execution
+levels = "all"
 
 [test.workflows]
-run = "all"
-screenshot = "all"
-timeout = 300
+gpu = "all"
+# gpu = ["heavy_model.json", "inference.json"]
 
 [test.platforms]
 linux = true

@@ -23,18 +23,20 @@ class TestLevel(str, Enum):
     - registration: Start server, check nodes in object_info (requires install)
     - instantiation: Call each node's constructor (requires install)
     - static_capture: Take static screenshots of workflows (requires install)
-    - execution: Run workflows end-to-end, capture with outputs (requires install)
+    - validation: Validate workflows via /validate endpoint (requires install)
+    - execution: Run workflows end-to-end, capture with outputs (requires install, may require GPU)
 
     Dependencies:
     - syntax: standalone
     - install: standalone
-    - registration, instantiation, static_capture, execution: all require install
+    - registration, instantiation, static_capture, validation, execution: all require install
     """
     SYNTAX = "syntax"
     INSTALL = "install"
     REGISTRATION = "registration"
     INSTANTIATION = "instantiation"
     STATIC_CAPTURE = "static_capture"
+    VALIDATION = "validation"
     EXECUTION = "execution"
 
     @classmethod
@@ -50,6 +52,7 @@ class TestLevel(str, Enum):
             cls.REGISTRATION: [cls.INSTALL],
             cls.INSTANTIATION: [cls.INSTALL],
             cls.STATIC_CAPTURE: [cls.INSTALL],
+            cls.VALIDATION: [cls.INSTALL],
             cls.EXECUTION: [cls.INSTALL],
         }
         return deps.get(level, [])
@@ -70,7 +73,7 @@ class TestLevel(str, Enum):
                 all_levels.add(dep)
 
         # Return in execution order
-        order = [cls.SYNTAX, cls.INSTALL, cls.REGISTRATION, cls.INSTANTIATION, cls.STATIC_CAPTURE, cls.EXECUTION]
+        order = [cls.SYNTAX, cls.INSTALL, cls.REGISTRATION, cls.INSTANTIATION, cls.STATIC_CAPTURE, cls.VALIDATION, cls.EXECUTION]
         return [l for l in order if l in all_levels]
 
 
@@ -78,35 +81,45 @@ class TestLevel(str, Enum):
 class WorkflowConfig:
     """Configuration for workflow testing.
 
+    All workflows in workflows/ folder are auto-discovered. Screenshots are always taken.
+
     Args:
-        run: Workflows to execute end-to-end
-        screenshot: Workflows to capture screenshots of. Behavior depends on level:
-                   - static_capture level: takes static screenshot (no execution)
-                   - execution level: if workflow is also in 'run', captures with outputs
-        timeout: Timeout in seconds for workflow execution (None = no timeout)
-        files: Deprecated - use run instead
-        file: Deprecated - use run instead
+        workflows: All discovered workflow files (auto-populated)
+        gpu: Workflows that require GPU to execute (skipped on non-GPU environments).
+             Can be set to all workflows or a subset.
+        timeout: Timeout in seconds for workflow execution
+
+        # Deprecated fields (for backwards compatibility)
+        run: Deprecated - all workflows are now run
+        screenshot: Deprecated - all workflows are now screenshotted
+        files: Deprecated - use workflows folder
+        file: Deprecated - use workflows folder
     """
 
+    workflows: List[Path] = field(default_factory=list)
+    gpu: List[Path] = field(default_factory=list)
+    timeout: int = 3600  # Default 60 minutes
+
+    # Deprecated fields for backwards compatibility
     run: List[Path] = field(default_factory=list)
     screenshot: List[Path] = field(default_factory=list)
-    timeout: int = 3600  # Default 60 minutes
-    files: List[Path] = field(default_factory=list)  # Deprecated
-    file: Optional[Path] = None  # Deprecated
+    files: List[Path] = field(default_factory=list)
+    file: Optional[Path] = None
 
     def __post_init__(self):
         """Validate and normalize configuration."""
-        # Migrate deprecated 'files' to 'run'
-        if self.files and not self.run:
-            self.run = list(self.files)
-
-        # Handle deprecated 'file' field - migrate to 'run'
-        if self.file is not None:
-            self.file = Path(self.file)
-            if not self.run:
-                self.run = [self.file]
+        # Backwards compatibility: migrate deprecated fields to workflows
+        if not self.workflows:
+            if self.run:
+                self.workflows = list(self.run)
+            elif self.files:
+                self.workflows = list(self.files)
+            elif self.file is not None:
+                self.workflows = [Path(self.file)]
 
         # Normalize to Path objects
+        self.workflows = [Path(f) for f in self.workflows]
+        self.gpu = [Path(f) for f in self.gpu]
         self.run = [Path(f) for f in self.run]
         self.screenshot = [Path(f) for f in self.screenshot]
         self.files = [Path(f) for f in self.files]
@@ -159,7 +172,7 @@ class TestConfig:
     name: str
     comfyui_version: str = "latest"
     python_version: str = field(default_factory=_random_python_version)
-    timeout: int = 300
+    timeout: int = 600
     levels: List[TestLevel] = field(default_factory=lambda: list(TestLevel))
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     linux: PlatformTestConfig = field(default_factory=PlatformTestConfig)
