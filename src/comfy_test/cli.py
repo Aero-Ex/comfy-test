@@ -66,6 +66,32 @@ def cmd_run(args) -> int:
             log_callback=print,
         )
 
+    # Handle --vm mode (run on Windows QCOW2 VM)
+    if args.vm:
+        from .vm_runner import run_vm
+        output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / ".comfy-test-vm"
+        qcow2_path = Path(args.qcow2) if args.qcow2 else None
+        return run_vm(
+            node_dir=Path.cwd(),
+            output_dir=output_dir,
+            config_file=args.config or "comfy-test.toml",
+            qcow2_path=qcow2_path,
+            gpu=args.gpu,
+            log_callback=print,
+        )
+
+    # Handle --mac mode (run on macOS QEMU VM)
+    if args.mac:
+        from .mac_runner import run_mac_vm
+        output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / ".comfy-test-mac"
+        return run_mac_vm(
+            node_dir=Path.cwd(),
+            output_dir=output_dir,
+            config_file=args.config or "comfy-test.toml",
+            ssh_password=args.mac_password or "",
+            log_callback=print,
+        )
+
     # Require CI environment for direct execution
     if not os.environ.get('GITHUB_ACTIONS') and not os.environ.get('ACT'):
         print("Error: Direct execution requires CI environment (GITHUB_ACTIONS or ACT).", file=sys.stderr)
@@ -676,7 +702,25 @@ def main(args=None) -> int:
     run_parser.add_argument(
         "--gpu",
         action="store_true",
-        help="Enable GPU passthrough (with --local)",
+        help="Enable GPU passthrough (with --local or --vm)",
+    )
+    run_parser.add_argument(
+        "--vm",
+        action="store_true",
+        help="Run tests on Windows QCOW2 VM (requires qemu)",
+    )
+    run_parser.add_argument(
+        "--qcow2",
+        help="Path to Windows QCOW2 image (with --vm, default: auto-detect)",
+    )
+    run_parser.add_argument(
+        "--mac",
+        action="store_true",
+        help="Run tests on macOS QEMU VM (requires OSX-KVM)",
+    )
+    run_parser.add_argument(
+        "--mac-password",
+        help="SSH password for macOS VM user",
     )
     run_parser.set_defaults(func=cmd_run)
 

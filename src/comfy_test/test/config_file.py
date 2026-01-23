@@ -79,7 +79,7 @@ def load_config(
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 
-    base_dir = Path(base_dir) if base_dir else path.parent
+    base_dir = Path(base_dir) if base_dir else path.resolve().parent
 
     try:
         with open(path, "rb") as f:
