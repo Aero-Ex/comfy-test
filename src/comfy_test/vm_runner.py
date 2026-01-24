@@ -298,7 +298,48 @@ class WinRMSession:
         return self.copy_file_with_progress(local_path, remote_path)
 
     def copy_file_with_progress(self, local_path: Path, remote_path: str, log: Callable = None) -> bool:
-        """Copy a file to the VM using base64 encoding with progress."""
+        """Copy a file to the VM using SCP (fast) with fallback to base64 (slow)."""
+        # Try SCP first (much faster for large files)
+        if self._copy_file_scp(local_path, remote_path, log):
+            return True
+
+        # Fallback to base64 for small files or if SCP fails
+        if log:
+            log("  SCP unavailable, falling back to base64 transfer...")
+        return self._copy_file_base64(local_path, remote_path, log)
+
+    def _copy_file_scp(self, local_path: Path, remote_path: str, log: Callable = None) -> bool:
+        """Copy a file to the VM using SCP (much faster than WinRM base64)."""
+        # Check if sshpass is available
+        if not shutil.which("sshpass"):
+            if log:
+                log("  Installing sshpass...")
+            subprocess.run(["sudo", "apt-get", "install", "-y", "sshpass"],
+                          capture_output=True)
+
+        if not shutil.which("sshpass"):
+            return False  # sshpass not available, use fallback
+
+        if log:
+            log(f"  Uploading via SCP...")
+
+        result = subprocess.run([
+            "sshpass", "-p", WINRM_PASS,
+            "scp", "-P", "2222",
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            str(local_path),
+            f"{WINRM_USER}@127.0.0.1:{remote_path}"
+        ], capture_output=True)
+
+        if result.returncode != 0:
+            if log:
+                log(f"  SCP failed: {result.stderr.decode()}")
+            return False
+        return True
+
+    def _copy_file_base64(self, local_path: Path, remote_path: str, log: Callable = None) -> bool:
+        """Copy a file to the VM using base64 encoding (slow fallback)."""
         content = local_path.read_bytes()
         b64_content = base64.b64encode(content).decode('ascii')
 
@@ -341,7 +382,10 @@ $combined = $existing + $new
         """Copy a directory to the VM by zipping and extracting."""
         # Parse gitignore patterns
         gitignore_patterns = _parse_gitignore(local_dir)
-        always_skip = {'.git', '__pycache__', '.venv', 'node_modules', '.comfy-test', '.comfy-test-env', '.comfy-test-logs'}
+        always_skip = {'.git', '__pycache__', '.venv', 'node_modules', '.comfy-test', '.comfy-test-env', '.comfy-test-logs', '.comfy-test-vm'}
+
+        log(f"  Gitignore patterns: {len(gitignore_patterns)} patterns loaded")
+        log(f"  Key patterns: {[p for p in gitignore_patterns if '_env' in p or '_blender' in p]}")
 
         # Create a zip file
         with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as f:
@@ -349,6 +393,7 @@ $combined = $existing + $new
 
         try:
             # Zip the directory
+            large_files = []
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for file_path in local_dir.rglob('*'):
                     if file_path.is_file():
@@ -356,12 +401,20 @@ $combined = $existing + $new
                         if any(p in always_skip for p in file_path.parts):
                             continue
 
-                        # Check gitignore patterns
+                        # Check gitignore patterns (check each path component for directory patterns)
                         rel_path = file_path.relative_to(local_dir)
                         skip = False
                         for pattern in gitignore_patterns:
-                            if fnmatch.fnmatch(file_path.name, pattern) or fnmatch.fnmatch(str(rel_path), pattern):
+                            # Check filename
+                            if fnmatch.fnmatch(file_path.name, pattern):
                                 skip = True
+                                break
+                            # Check each path component (handles directory patterns like _env_*)
+                            for part in rel_path.parts:
+                                if fnmatch.fnmatch(part, pattern):
+                                    skip = True
+                                    break
+                            if skip:
                                 break
                         if skip:
                             continue
@@ -369,8 +422,20 @@ $combined = $existing + $new
                         arcname = rel_path
                         zf.write(file_path, arcname)
 
+                        # Track large files
+                        size = file_path.stat().st_size
+                        if size > 50_000_000:  # > 50MB
+                            large_files.append((size, str(rel_path)))
+
+            # Log large files
+            if large_files:
+                log(f"  Large files included:")
+                for size, path in sorted(large_files, reverse=True)[:5]:
+                    log(f"    {size/1024/1024:.0f} MB: {path}")
+
             zip_size = zip_path.stat().st_size / (1024 * 1024)
-            log(f"  Created zip archive ({zip_size:.1f} MB)")
+            file_count = len(zf.namelist())
+            log(f"  Created zip archive ({zip_size:.1f} MB, {file_count} files)")
 
             # Copy zip to VM
             remote_zip = f"C:\\temp\\transfer.zip"
@@ -507,7 +572,7 @@ def run_vm(
         "-bios", str(OVMF_PATH),
         "-drive", f"file={overlay_path},if=virtio,cache=writeback,discard=ignore,format=qcow2",
         "-device", "virtio-net-pci,netdev=net0",
-        "-netdev", f"user,id=net0,hostfwd=tcp::{WINRM_PORT}-:5985",
+        "-netdev", f"user,id=net0,hostfwd=tcp::{WINRM_PORT}-:5985,hostfwd=tcp::2222-:22",
         "-vnc", ":0",  # VNC on port 5900 for debugging
     ]
 
@@ -580,23 +645,93 @@ def run_vm(
             return 1
         log(f"  Connected to: {result.stdout.strip()}")
 
-        # Copy node to VM
-        log(f"Copying {node_dir.name} to VM...")
-        remote_node_dir = f"C:\\test-node\\{node_dir.name}"
-        if not session.copy_directory(node_dir, remote_node_dir, log=log):
+        # Set up test environment on Desktop (matching other platform tests)
+        desktop = "C:\\Users\\packer\\Desktop"
+        comfyui_dir = f"{desktop}\\ComfyUI"
+        custom_nodes_dir = f"{comfyui_dir}\\custom_nodes"
+        node_target_dir = f"{custom_nodes_dir}\\{node_dir.name}"
+
+        # Clone ComfyUI
+        log("Cloning ComfyUI...")
+        result = session.run_ps(f'''
+            Remove-Item -Recurse -Force "{comfyui_dir}" -ErrorAction SilentlyContinue
+            git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git "{comfyui_dir}"
+        ''')
+        if result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                log(f"  {line}")
+        if result.returncode != 0:
+            log(f"Error cloning ComfyUI: {result.stderr}")
+            return 1
+
+        # Install PyTorch (CPU)
+        log("Installing PyTorch (CPU)...")
+        result = session.run_ps('''
+            uv pip install --system torch==2.8.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+        ''')
+        if result.stdout.strip():
+            for line in result.stdout.strip().splitlines()[-5:]:
+                log(f"  {line}")
+        if result.returncode != 0:
+            log(f"Warning: PyTorch install returned {result.returncode}")
+            if result.stderr:
+                log(f"  {result.stderr[:200]}")
+
+        # Install ComfyUI requirements
+        log("Installing ComfyUI requirements...")
+        result = session.run_ps(f'uv pip install --system -r "{comfyui_dir}\\requirements.txt"')
+        if result.stdout.strip():
+            for line in result.stdout.strip().splitlines()[-3:]:
+                log(f"  {line}")
+        if result.returncode != 0:
+            log(f"Warning: ComfyUI requirements install returned {result.returncode}")
+
+        # Copy node to custom_nodes
+        log(f"Copying {node_dir.name} to custom_nodes...")
+        if not session.copy_directory(node_dir, node_target_dir, log=log):
             log("Error: Failed to copy node to VM")
             return 1
 
+        # Install node requirements (uv pip install -r requirements.txt)
+        log("Installing node requirements (uv pip install)...")
+        result = session.run_ps(f'''
+            if (Test-Path "{node_target_dir}\\requirements.txt") {{
+                uv pip install --system -r "{node_target_dir}\\requirements.txt"
+            }} else {{
+                Write-Host "No requirements.txt found"
+            }}
+        ''')
+        if result.stdout.strip():
+            for line in result.stdout.strip().splitlines():
+                log(f"  {line}")
+        if result.returncode != 0:
+            log(f"Warning: Node requirements install returned {result.returncode}")
+
+        # Run install.py if present
+        log("Running node install.py...")
+        result = session.run_ps(f'''
+            if (Test-Path "{node_target_dir}\\install.py") {{
+                $env:COMFY_ENV_CUDA_VERSION = "12.8"
+                Set-Location "{node_target_dir}"
+                python install.py
+            }}
+        ''')
+        if result.stdout.strip():
+            for line in result.stdout.strip().splitlines()[-5:]:
+                log(f"  {line}")
+        if result.returncode != 0:
+            log(f"Warning: install.py returned {result.returncode}")
+
         # Install comfy-test
         log("Installing comfy-test...")
-        result = session.run_ps('pip install comfy-test')
+        result = session.run_ps('uv pip install --system comfy-test')
         if result.returncode != 0:
             log(f"Error installing comfy-test: {result.stderr}")
             return 1
 
-        # Run tests
+        # Run tests (set GITHUB_ACTIONS to bypass CI check)
         log("Running tests...")
-        test_cmd = f'cd "{remote_node_dir}" && comfy-test run --platform windows'
+        test_cmd = f'$env:GITHUB_ACTIONS = "true"; Set-Location "{node_target_dir}"; comfy-test run --platform windows'
         if levels:
             test_cmd += f' --level {",".join(levels)}'
         test_cmd += f' -c {config_file}'
@@ -608,7 +743,7 @@ def run_vm(
 
         # Copy results back
         log("Fetching results...")
-        results_dir = f"{remote_node_dir}\\.comfy-test"
+        results_dir = f"{node_target_dir}\\.comfy-test"
 
         # Get list of result files
         list_result = session.run_ps(f'Get-ChildItem -Recurse "{results_dir}" | Select-Object -ExpandProperty FullName')
