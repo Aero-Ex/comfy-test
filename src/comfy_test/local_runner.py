@@ -240,6 +240,7 @@ def run_local(
         container_opts = [
             "-t",  # Allocate pseudo-TTY to force line-buffered output
             f"-v {output_dir}:{work_dir}/.comfy-test",
+            f"--user {os.getuid()}:{os.getgid()}",  # Run as current user to avoid root-owned files
             "--shm-size=8g",  # Default 64MB is too small for ML tensor transfer
         ]
         if gpu:
