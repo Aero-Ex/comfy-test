@@ -19,6 +19,10 @@ on:
         description: "Job timeout in minutes (default: 60)"
         type: number
         default: 60
+      run-gpu:
+        description: "Run GPU tests (requires self-hosted runners)"
+        type: boolean
+        default: false
 
 jobs:
   parse-config:
@@ -42,7 +46,11 @@ jobs:
           echo "python-version=$version" >> $GITHUB_OUTPUT
           echo "Selected Python version: $version"
 
-  test-linux:
+  # =============================================================================
+  # CPU Tests (GitHub-hosted runners)
+  # =============================================================================
+
+  test-linux-cpu:
     needs: parse-config
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -106,33 +114,15 @@ jobs:
         if: always() && steps.install.outcome == 'success'
         run: comfy-test run --platform linux --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
 
-      - name: Upload logs
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs-linux
+          name: results-linux-cpu
           path: .comfy-test/
           if-no-files-found: ignore
 
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots-linux
-          path: .comfy-test/screenshots/
-          if-no-files-found: ignore
-
-      - name: Publish to gh-pages
-        if: always() && steps.install.outcome == 'success'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: .comfy-test
-          keep_files: false
-          exclude_assets: ''
-
-  test-windows:
+  test-windows-cpu:
     needs: parse-config
     runs-on: windows-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -189,25 +179,15 @@ jobs:
         if: always() && steps.install.outcome == 'success'
         run: comfy-test run --platform windows --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
 
-      - name: Upload logs
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs-windows
+          name: results-windows-cpu
           path: .comfy-test/
           if-no-files-found: ignore
 
-      - name: Upload screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots-windows
-          path: |
-            ${{ inputs.node-path }}/workflows/*.png
-            ${{ inputs.node-path }}/workflows/**/*.png
-          if-no-files-found: ignore
-
-  test-windows-portable:
+  test-windows-portable-cpu:
     needs: parse-config
     runs-on: windows-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -261,20 +241,334 @@ jobs:
         if: always() && steps.install.outcome == 'success'
         run: comfy-test run --platform windows-portable --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
 
-      - name: Upload logs
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-logs-windows-portable
+          name: results-windows-portable-cpu
           path: .comfy-test/
           if-no-files-found: ignore
 
-      - name: Upload screenshots
+  # =============================================================================
+  # GPU Tests (Self-hosted runners with GPU)
+  # =============================================================================
+
+  test-linux-gpu:
+    if: ${{ inputs.run-gpu }}
+    needs: parse-config
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      COMFY_TEST_GPU: "1"
+    steps:
+      - name: Checkout node
+        uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: PozzettiAndrea/comfy-test
+          ref: ${{ inputs.comfy-test-ref }}
+          path: .comfy-test-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.parse-config.outputs.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install comfy-test
+        run: pip install "./.comfy-test-src[screenshot]"
+
+      - name: Install Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform linux --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform linux --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform linux --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: screenshots-windows-portable
-          path: |
-            ${{ inputs.node-path }}/workflows/*.png
-            ${{ inputs.node-path }}/workflows/**/*.png
+          name: results-linux-gpu
+          path: .comfy-test/
           if-no-files-found: ignore
+
+  test-windows-gpu:
+    if: ${{ inputs.run-gpu }}
+    needs: parse-config
+    runs-on: [self-hosted, windows, gpu]
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      COMFY_TEST_GPU: "1"
+    steps:
+      - name: Checkout node
+        uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: PozzettiAndrea/comfy-test
+          ref: ${{ inputs.comfy-test-ref }}
+          path: .comfy-test-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.parse-config.outputs.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install comfy-test
+        run: pip install "./.comfy-test-src[screenshot]"
+
+      - name: Install Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform windows --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform windows --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-windows-gpu
+          path: .comfy-test/
+          if-no-files-found: ignore
+
+  test-windows-portable-gpu:
+    if: ${{ inputs.run-gpu }}
+    needs: parse-config
+    runs-on: [self-hosted, windows, gpu]
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      COMFY_TEST_GPU: "1"
+    steps:
+      - name: Checkout node
+        uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: PozzettiAndrea/comfy-test
+          ref: ${{ inputs.comfy-test-ref }}
+          path: .comfy-test-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.parse-config.outputs.python-version }}
+
+      - name: Install comfy-test
+        run: pip install "./.comfy-test-src[screenshot]"
+
+      - name: Install Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform windows-portable --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform windows-portable --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform windows-portable --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-windows-portable-gpu
+          path: .comfy-test/
+          if-no-files-found: ignore
+
+  # =============================================================================
+  # Publish to gh-pages
+  # =============================================================================
+
+  publish:
+    needs: [test-linux-cpu, test-windows-cpu, test-windows-portable-cpu]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare gh-pages structure
+        run: |
+          mkdir -p gh-pages
+
+          # Move each result set to its subdirectory
+          for dir in artifacts/results-*; do
+            if [ -d "$dir" ]; then
+              name=$(basename "$dir" | sed 's/results-//')
+              mkdir -p "gh-pages/$name"
+              cp -r "$dir"/* "gh-pages/$name/" 2>/dev/null || true
+            fi
+          done
+
+          # Create root index.html with tabs
+          cat > gh-pages/index.html << 'HTMLEOF'
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>ComfyUI Test Results</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #1a1a2e; color: #eee; }
+              .tabs { display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; }
+              .tab { padding: 10px 20px; background: #16213e; border: none; color: #888; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; }
+              .tab:hover { background: #1f3460; color: #fff; }
+              .tab.active { background: #0f3460; color: #fff; }
+              .tab.available { color: #4ade80; }
+              .tab.unavailable { color: #666; cursor: not-allowed; }
+              .content { background: #16213e; border-radius: 0 8px 8px 8px; padding: 20px; min-height: 400px; }
+              iframe { width: 100%; height: 600px; border: none; border-radius: 4px; background: #1a1a2e; }
+              h1 { margin: 0 0 20px 0; font-size: 24px; }
+              .legend { display: flex; gap: 20px; margin-bottom: 15px; font-size: 12px; }
+              .legend span { display: flex; align-items: center; gap: 6px; }
+              .dot { width: 10px; height: 10px; border-radius: 50%; }
+              .dot.available { background: #4ade80; }
+              .dot.unavailable { background: #666; }
+            </style>
+          </head>
+          <body>
+            <h1>ComfyUI Test Results</h1>
+            <div class="legend">
+              <span><span class="dot available"></span> Results available</span>
+              <span><span class="dot unavailable"></span> No results yet</span>
+            </div>
+            <div class="tabs" id="tabs"></div>
+            <div class="content">
+              <iframe id="frame" src="about:blank"></iframe>
+            </div>
+            <script>
+              const platforms = [
+                { id: 'linux-cpu', label: 'Linux CPU' },
+                { id: 'linux-gpu', label: 'Linux GPU' },
+                { id: 'windows-cpu', label: 'Windows CPU' },
+                { id: 'windows-gpu', label: 'Windows GPU' },
+                { id: 'windows-portable-cpu', label: 'Win Portable CPU' },
+                { id: 'windows-portable-gpu', label: 'Win Portable GPU' },
+              ];
+
+              const tabs = document.getElementById('tabs');
+              const frame = document.getElementById('frame');
+              let activeTab = null;
+
+              async function checkAvailable(id) {
+                try {
+                  const resp = await fetch(id + '/index.html', { method: 'HEAD' });
+                  return resp.ok;
+                } catch { return false; }
+              }
+
+              async function init() {
+                for (const p of platforms) {
+                  const available = await checkAvailable(p.id);
+                  const btn = document.createElement('button');
+                  btn.className = 'tab ' + (available ? 'available' : 'unavailable');
+                  btn.textContent = p.label;
+                  btn.onclick = () => {
+                    if (!available) return;
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    btn.classList.add('active');
+                    frame.src = p.id + '/index.html';
+                    activeTab = p.id;
+                    history.replaceState(null, '', '#' + p.id);
+                  };
+                  tabs.appendChild(btn);
+
+                  // Auto-select first available or from hash
+                  const hash = location.hash.slice(1);
+                  if ((hash === p.id || (!activeTab && available)) && available) {
+                    btn.click();
+                  }
+                }
+              }
+
+              init();
+            </script>
+          </body>
+          </html>
+          HTMLEOF
+
+          # Add .nojekyll
+          touch gh-pages/.nojekyll
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: gh-pages
+          keep_files: true

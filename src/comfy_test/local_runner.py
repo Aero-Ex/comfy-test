@@ -1,5 +1,7 @@
 """Local test execution via act (GitHub Actions locally)."""
 
+import os
+import platform
 import subprocess
 import shutil
 import tempfile
@@ -9,7 +11,12 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional, List, Tuple
 
-ACT_IMAGE = "catthehacker/ubuntu:act-22.04"
+# Container images
+LINUX_IMAGE = "catthehacker/ubuntu:act-22.04"
+WINDOWS_IMAGE = "python:3.12-windowsservercore-ltsc2022"
+
+# For backwards compatibility
+ACT_IMAGE = LINUX_IMAGE
 
 
 def ensure_gitignore(node_dir: Path, pattern: str = ".comfy-test-logs/"):
@@ -123,6 +130,7 @@ def run_local(
     gpu: bool = False,
     verbose: bool = False,
     log_callback: Optional[Callable[[str], None]] = None,
+    platform_name: Optional[str] = None,
 ) -> int:
     """Run tests locally via act (GitHub Actions in Docker).
 
@@ -133,11 +141,29 @@ def run_local(
         gpu: Enable GPU passthrough
         verbose: Show all output (streaming mode)
         log_callback: Function to call with log lines
+        platform_name: Platform to test (linux, windows, windows-portable). Auto-detected if None.
 
     Returns:
         Exit code (0 = success)
     """
     log = log_callback or print
+
+    # Auto-detect platform if not specified
+    is_windows_host = platform.system() == "Windows"
+    if platform_name is None:
+        platform_name = "windows" if is_windows_host else "linux"
+
+    # Determine container image and job name
+    if platform_name in ("windows", "windows-portable"):
+        container_image = WINDOWS_IMAGE
+        job_name = f"test-{platform_name}"
+        runner_label = "windows-latest"
+    else:
+        container_image = LINUX_IMAGE
+        job_name = "test-linux"
+        runner_label = "ubuntu-latest"
+
+    log(f"Platform: {platform_name} (image: {container_image})")
 
     # Auto-add .comfy-test-logs to .gitignore
     ensure_gitignore(node_dir, ".comfy-test-logs/")
@@ -238,20 +264,27 @@ def run_local(
         # Build command (use temp dir for action cache to avoid stale state)
         action_cache_dir = Path(temp_dir) / ".act-cache"
         # Use unique toolcache path to isolate concurrent runs
-        toolcache_path = f"/tmp/toolcache-{Path(temp_dir).name}"
-        cmd = [
-            "stdbuf", "-oL",
-            "act",
-            "-P", f"ubuntu-latest={ACT_IMAGE}",
+        toolcache_path = f"/tmp/toolcache-{Path(temp_dir).name}" if not is_windows_host else f"C:\\temp\\toolcache-{Path(temp_dir).name}"
+
+        # Base command differs by host OS
+        if is_windows_host:
+            # Windows: no stdbuf
+            cmd = ["act"]
+        else:
+            # Linux: use stdbuf for line-buffered output
+            cmd = ["stdbuf", "-oL", "act"]
+
+        cmd.extend([
+            "-P", f"{runner_label}={container_image}",
             "--pull=false",
             "--rm",
-            "-j", "test",
+            "-j", job_name,
             "--network", "bridge",
             "--action-cache-path", str(action_cache_dir),
             "--container-options", " ".join(container_opts),
             "--env", "PYTHONUNBUFFERED=1",
             "--env", f"RUNNER_TOOL_CACHE={toolcache_path}",
-        ]
+        ])
         if gpu:
             cmd.extend(["--env", "COMFY_TEST_GPU=1"])
 
