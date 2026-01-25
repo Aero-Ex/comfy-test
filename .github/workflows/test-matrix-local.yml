@@ -5,6 +5,8 @@
 name: ComfyUI Installation Test Matrix (Local)
 
 on:
+  push:
+  workflow_dispatch:
   workflow_call:
     inputs:
       node-path:
@@ -36,8 +38,8 @@ jobs:
       - name: Parse python version from config
         id: config
         run: |
-          if [ -f "${{ inputs.config-file }}" ]; then
-            version=$(grep -E "^python_version\s*=" "${{ inputs.config-file }}" 2>/dev/null | sed "s/.*=\s*[\"']\?\([^\"']*\)[\"']\?/\1/" | tr -d ' ')
+          if [ -f "${{ inputs.config-file || 'comfy-test.toml' }}" ]; then
+            version=$(grep -E "^python_version\s*=" "${{ inputs.config-file || 'comfy-test.toml' }}" 2>/dev/null | sed "s/.*=\s*[\"']\?\([^\"']*\)[\"']\?/\1/" | tr -d ' ')
           fi
           if [ -z "$version" ]; then
             versions=("3.11" "3.12" "3.13")
@@ -109,29 +111,29 @@ jobs:
 
       - name: Syntax
         id: syntax
-        run: comfy-test run --platform linux --only-level syntax -c ${{ inputs.config-file }}
+        run: comfy-test run --platform linux --only-level syntax -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Install
         id: install
         if: always()
         run: |
           export COMFY_LOCAL_WHEELS="$(pwd)/.wheels"
-          comfy-test run --platform linux --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+          comfy-test run --platform linux --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Registration
         id: registration
         if: always() && steps.install.outcome == 'success'
-        run: comfy-test run --platform linux --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+        run: comfy-test run --platform linux --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Instantiation
         id: instantiation
         if: always() && steps.install.outcome == 'success'
-        run: comfy-test run --platform linux --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+        run: comfy-test run --platform linux --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Execution
         id: execution
         if: always() && steps.install.outcome == 'success'
-        run: comfy-test run --platform linux --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+        run: comfy-test run --platform linux --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Upload logs
         if: always()
@@ -168,27 +170,27 @@ jobs:
 
       - name: Syntax
         id: syntax
-        run: comfy-test run --platform windows --only-level syntax -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows --only-level syntax -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Install
         id: install
         if: always()
-        run: comfy-test run --platform windows --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Registration
         id: registration
         if: always() && steps.install.outcome == 'success'
-        run: comfy-test run --platform windows --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Instantiation
         id: instantiation
         if: always() && steps.install.outcome == 'success'
-        run: comfy-test run --platform windows --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Execution
         id: execution
         if: always() && steps.install.outcome == 'success'
-        run: comfy-test run --platform windows --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Upload logs
         if: always()
@@ -222,27 +224,27 @@ jobs:
 
       - name: Syntax
         id: syntax
-        run: comfy-test run --platform windows-portable --only-level syntax -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows-portable --only-level syntax -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Install
         id: install
         if: always()
-        run: comfy-test run --platform windows-portable --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows-portable --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Registration
         id: registration
         if: always() && steps.install.outcome == 'success'
-        run: comfy-test run --platform windows-portable --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows-portable --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Instantiation
         id: instantiation
         if: always() && steps.install.outcome == 'success'
-        run: comfy-test run --platform windows-portable --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows-portable --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Execution
         id: execution
         if: always() && steps.install.outcome == 'success'
-        run: comfy-test run --platform windows-portable --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows-portable --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file || 'comfy-test.toml' }}
 
       - name: Upload logs
         if: always()

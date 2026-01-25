@@ -60,13 +60,19 @@ def cmd_run(args) -> int:
             platform_name=args.platform,  # Pass through platform (auto-detected if None)
         )
 
-    # Require CI environment for direct execution
+    # Auto-detect: if not in CI, use local mode automatically
     if not os.environ.get('GITHUB_ACTIONS') and not os.environ.get('ACT'):
-        print("Error: Direct execution requires CI environment (GITHUB_ACTIONS or ACT).", file=sys.stderr)
-        print(file=sys.stderr)
-        print("For local testing, use:", file=sys.stderr)
-        print("  comfy-test run --local    # Runs in Docker via act", file=sys.stderr)
-        return 1
+        from .local_runner import run_local
+        print("[comfy-test] Not in CI environment, running locally via Docker...")
+        output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / ".comfy-test-logs"
+        return run_local(
+            node_dir=Path.cwd(),
+            output_dir=output_dir,
+            config_file=args.config or "comfy-test.toml",
+            gpu=args.gpu,
+            log_callback=print,
+            platform_name=args.platform,
+        )
 
     try:
         # Load config

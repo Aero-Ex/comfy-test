@@ -31,10 +31,10 @@ def ensure_gitignore(node_dir: Path, pattern: str = ".comfy-test-logs/"):
         gitignore.write_text(f"# comfy-test output\n{pattern}\n")
 
 
-# Patterns to detect step transitions in act output
-STEP_START = re.compile(r'^Run (?:Main |Post )?(.+)$')
-STEP_SUCCESS = re.compile(r'^Success - (?:Main |Post )?(.+?) \[')
-STEP_FAILURE = re.compile(r'^Failure - (?:Main |Post )?(.+?) \[')
+# Patterns to detect step transitions in act output (no ^ anchor - lines have leading whitespace)
+STEP_START = re.compile(r'Run (?:Main |Post )?(.+)$')
+STEP_SUCCESS = re.compile(r'Success - (?:Main |Post )?(.+?) \[')
+STEP_FAILURE = re.compile(r'Failure - (?:Main |Post )?(.+?) \[')
 
 
 def _gitignore_filter(base_dir: Path):
@@ -211,32 +211,12 @@ def run_local(
             ignore=_gitignore_filter(node_dir)
         )
 
-        # Set up local workflow
+        # Set up local workflow - copy test-matrix-local.yml directly
         if local_workflow.exists():
             work_workflow_dir = work_dir / ".github" / "workflows"
             work_workflow_dir.mkdir(parents=True, exist_ok=True)
             target = work_workflow_dir / "test-matrix.yml"
-
-            workflow_content = local_workflow.read_text()
-            repo_suffix = node_dir.name.replace("ComfyUI-", "").lower()
-            workflow_content = workflow_content.replace("parse-config:", f"parse-config-{repo_suffix}:")
-            workflow_content = workflow_content.replace("needs: parse-config", f"needs: parse-config-{repo_suffix}")
-            workflow_content = workflow_content.replace("test-linux:", f"test-linux-{repo_suffix}:")
-            workflow_content = workflow_content.replace("test-windows:", f"test-windows-{repo_suffix}:")
-            workflow_content = workflow_content.replace("test-windows-portable:", f"test-windows-portable-{repo_suffix}:")
-
-            target.write_text(workflow_content)
-
-            run_tests_yml = work_workflow_dir / "run-tests.yml"
-            if run_tests_yml.exists():
-                content = run_tests_yml.read_text()
-                patched = re.sub(
-                    r'uses:\s*PozzettiAndrea/comfy-test/\.github/workflows/test-matrix\.yml@\w+',
-                    'uses: ./.github/workflows/test-matrix.yml',
-                    content
-                )
-                if patched != content:
-                    run_tests_yml.write_text(patched)
+            shutil.copy(local_workflow, target)
 
         # Pre-build wheels on host (avoids hatchling issues in Docker)
         wheel_dir = work_dir / ".wheels"
@@ -266,7 +246,7 @@ def run_local(
             container_opts.append("--gpus all")
 
         # Build command (use temp dir for action cache to avoid stale state)
-        action_cache_dir = Path(temp_dir) / ".act-cache"
+        action_cache_dir = Path.home() / ".cache" / "act"
         # Use unique toolcache path to isolate concurrent runs
         toolcache_path = f"/tmp/toolcache-{Path(temp_dir).name}" if not is_windows_host else f"C:\\temp\\toolcache-{Path(temp_dir).name}"
 
@@ -279,6 +259,7 @@ def run_local(
             cmd = ["stdbuf", "-oL", "act"]
 
         cmd.extend([
+            "-W", ".github/workflows/test-matrix.yml",
             "-P", f"{runner_label}={container_image}",
             "--pull=false",
             "--rm",
