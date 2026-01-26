@@ -284,9 +284,11 @@ class ComfyUIAPI:
 
         # Connect WebSocket
         ws_url = self._get_ws_url(client_id)
+        log(f"[DEBUG] Connecting WebSocket to {ws_url}")
         try:
             ws = websocket.WebSocket()
             ws.connect(ws_url)
+            log(f"[DEBUG] WebSocket connected successfully")
         except (ConnectionRefusedError, OSError, websocket.WebSocketException) as e:
             raise ServerError(
                 "Failed to connect WebSocket for execution tracking",
@@ -304,6 +306,7 @@ class ComfyUIAPI:
             while True:
                 elapsed = time.time() - start_time
                 if elapsed > timeout:
+                    log(f"[DEBUG] TIMEOUT reached at {elapsed:.1f}s (limit={timeout}s)")
                     self.interrupt()
                     raise TestTimeoutError(
                         f"Workflow did not complete within {timeout} seconds",
@@ -316,30 +319,44 @@ class ComfyUIAPI:
                 try:
                     message_data = ws.recv()
                 except websocket.WebSocketTimeoutException:
-                    # Timeout on recv, continue loop to check overall timeout
+                    # Timeout on recv - check history as fallback in case we missed completion
+                    log(f"[DEBUG] WS recv timeout at {elapsed:.1f}s, checking history fallback...")
+                    history = self.get_history(prompt_id)
+                    if history:
+                        log(f"[DEBUG] History found during timeout - workflow completed!")
+                        log("Execution complete (detected via history fallback)")
+                        execution.outputs = history.get("outputs", {})
+                        break
                     continue
 
                 if not isinstance(message_data, str):
                     # Binary data (e.g., preview images), skip
+                    log(f"[DEBUG] WS recv binary data ({len(message_data)} bytes), skipping")
                     continue
 
                 try:
                     message = json.loads(message_data)
                 except json.JSONDecodeError:
+                    log(f"[DEBUG] WS recv invalid JSON: {message_data[:100]}")
                     continue
 
                 msg_type = message.get("type")
                 data = message.get("data", {})
                 msg_prompt_id = data.get("prompt_id")
 
+                # Log ALL messages for debugging
+                log(f"[DEBUG] WS msg: type={msg_type} prompt_id={msg_prompt_id} (waiting for {prompt_id})")
+
                 # Only process messages for our prompt
                 if msg_prompt_id and msg_prompt_id != prompt_id:
+                    log(f"[DEBUG] Skipping msg - prompt_id mismatch")
                     continue
 
                 if msg_type == "executing":
                     node_id = data.get("node")
                     if node_id is None:
                         # Execution complete (node=None signals end)
+                        log(f"[DEBUG] Got 'executing' with node=None -> COMPLETION SIGNAL")
                         log("Execution complete")
                         break
                     execution.runs.add(node_id)
@@ -354,12 +371,29 @@ class ComfyUIAPI:
                 elif msg_type == "execution_error":
                     # Capture full error details
                     execution.error = data
+                    log(f"[DEBUG] Got 'execution_error' -> breaking")
                     log(f"  Execution error: {data.get('exception_type', 'Unknown')}")
                     break
 
                 elif msg_type == "execution_success":
+                    log(f"[DEBUG] Got 'execution_success' -> breaking")
                     log("Execution complete (success)")
                     break
+
+                elif msg_type == "status":
+                    # Check queue_remaining for completion signal
+                    status_data = data.get("status", {})
+                    queue_remaining = status_data.get("exec_info", {}).get("queue_remaining", -1)
+                    # If queue empty, check history to confirm our prompt completed
+                    if queue_remaining == 0:
+                        history = self.get_history(prompt_id)
+                        if history:
+                            log("Execution complete (queue empty)")
+                            execution.outputs = history.get("outputs", {})
+                            break
+
+                else:
+                    log(f"[DEBUG] Unhandled msg_type: {msg_type}")
 
             # Fetch outputs from history
             history = self.get_history(prompt_id)

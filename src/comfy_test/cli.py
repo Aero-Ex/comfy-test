@@ -60,22 +60,40 @@ def cmd_run(args) -> int:
             platform_name=args.platform,  # Pass through platform (auto-detected if None)
         )
 
-    # Auto-detect: if not in CI and not already in Docker, use local mode automatically
+    # Auto-detect: if not in CI and not already in Docker, decide how to run
     in_ci = os.environ.get('GITHUB_ACTIONS') or os.environ.get('ACT')
     in_docker = os.environ.get('COMFY_TEST_IN_DOCKER')
 
     if not in_ci and not in_docker:
-        from .local_runner import run_local
-        print("[comfy-test] Not in CI environment, running locally via Docker...")
-        output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / ".comfy-test-logs"
-        return run_local(
-            node_dir=Path.cwd(),
-            output_dir=output_dir,
-            config_file=args.config or "comfy-test.toml",
-            gpu=args.gpu,
-            log_callback=print,
-            platform_name=args.platform,
-        )
+        # Check if Docker is available
+        is_windows = sys.platform == "win32"
+        docker_available = False
+
+        if is_windows:
+            import subprocess
+            try:
+                result = subprocess.run(["docker", "info"], capture_output=True, timeout=5)
+                docker_available = result.returncode == 0
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                docker_available = False
+        else:
+            # On Linux, assume Docker works
+            docker_available = True
+
+        if docker_available:
+            from .local_runner import run_local
+            print("[comfy-test] Running locally via Docker...")
+            output_dir = Path(args.output_dir) if args.output_dir else Path.cwd() / ".comfy-test-logs"
+            return run_local(
+                node_dir=Path.cwd(),
+                output_dir=output_dir,
+                config_file=args.config or "comfy-test.toml",
+                gpu=args.gpu,
+                log_callback=print,
+                platform_name=args.platform,
+            )
+        # No Docker on Windows - fall through to run directly with isolation
+        print("[comfy-test] Running directly (no Docker)...")
 
     try:
         # Load config
@@ -84,8 +102,9 @@ def cmd_run(args) -> int:
         else:
             config = discover_config()
 
-        # Create manager
-        manager = TestManager(config)
+        # Create manager with output_dir if specified
+        output_dir = Path(args.output_dir) if args.output_dir else None
+        manager = TestManager(config, output_dir=output_dir)
 
         # Handle --only-level for single-level execution (multi-step CI)
         if args.only_level:
@@ -693,7 +712,7 @@ def main(args=None) -> int:
     )
     run_parser.add_argument(
         "--output-dir", "-o",
-        help="Output directory for screenshots/logs/results.json (with --local)",
+        help="Output directory for screenshots/logs/results.json",
     )
     run_parser.add_argument(
         "--gpu",

@@ -51,6 +51,7 @@ class ProgressSpinner:
         print(f"[{mins:02d}:{secs:02d}] {self.workflow_name} [{self.current}/{self.total}] - {status}")
 from .comfy_env import get_cuda_packages, get_node_reqs
 from .platform import get_platform, TestPlatform, TestPaths
+from .platform.isolation import WindowsIsolation
 from ..comfyui.server import ComfyUIServer
 from ..comfyui.validator import WorkflowValidator
 from ..comfyui.workflow import WorkflowRunner
@@ -203,19 +204,56 @@ class TestManager:
         config: TestConfig,
         node_dir: Optional[Path] = None,
         log_callback: Optional[Callable[[str], None]] = None,
+        output_dir: Optional[Path] = None,
     ):
         self.config = config
         self.node_dir = Path(node_dir) if node_dir else Path.cwd()
-        self._log = log_callback or (lambda msg: print(msg))
+        self.output_dir = Path(output_dir) if output_dir else None  # External output dir
+        self._original_log = log_callback or (lambda msg: print(msg))
+        self._session_log: List[str] = []  # Capture ALL logs for session.log
+        self._session_start_time: float = 0  # Track start time for timestamps
+        self._session_log_file: Optional[Path] = None  # Live log file
         self._level_index = 0
         self._total_levels = 0
+
+    def _get_output_base(self) -> Path:
+        """Get the base output directory for logs, screenshots, results."""
+        return self.output_dir if self.output_dir else self._get_output_base()
+
+    def _log(self, msg: str) -> None:
+        """Log message with timestamp, write to file immediately."""
+        # Calculate elapsed time for timestamp
+        if self._session_start_time:
+            elapsed = time.time() - self._session_start_time
+            mins, secs = divmod(int(elapsed), 60)
+            timestamp = f"[{mins:02d}:{secs:02d}]"
+        else:
+            timestamp = "[00:00]"
+
+        timestamped_msg = f"{timestamp} {msg}"
+        self._original_log(msg)  # Print without timestamp (cleaner terminal)
+        self._session_log.append(timestamped_msg)
+
+        # Write to file immediately (live updates)
+        if self._session_log_file:
+            try:
+                with open(self._session_log_file, "a", encoding="utf-8") as f:
+                    f.write(timestamped_msg + "\n")
+            except Exception:
+                pass  # Don't fail on log write errors
+
+    def _save_session_log(self) -> None:
+        """Log completion message (logs are written live now)."""
+        if self._session_log_file and self._session_log_file.exists():
+            self._original_log(f"Session log: {self._session_log_file}")
 
     def _log_level_start(self, level: TestLevel, in_config: bool) -> None:
         """Log the start of a test level with clear formatting."""
         self._level_index += 1
         level_name = level.value.upper()
         status = "" if in_config else " (implicit)"
-        self._log(f"\n[{self._level_index}/{self._total_levels}] {level_name}{status}")
+        self._log("")  # Blank line before level
+        self._log(f"[{self._level_index}/{self._total_levels}] {level_name}{status}")
         self._log("-" * 40)
 
     def _log_level_skip(self, level: TestLevel) -> None:
@@ -302,6 +340,16 @@ class TestManager:
         if dry_run:
             return self._dry_run(platform_name, config_levels)
 
+        # Reset session log for this run and start timer
+        self._session_log = []
+        self._session_start_time = time.time()
+
+        # Create session log file at output base level (not in logs/ subfolder)
+        output_base = self._get_output_base()
+        output_base.mkdir(parents=True, exist_ok=True)
+        self._session_log_file = output_base / "session.log"
+        self._session_log_file.write_text("", encoding="utf-8")  # Clear existing
+
         try:
             # === SYNTAX LEVEL ===
             if TestLevel.SYNTAX not in config_levels:
@@ -331,6 +379,12 @@ class TestManager:
             # Create temporary work directory
             with tempfile.TemporaryDirectory(prefix="comfy_test_") as work_dir:
                 work_path = Path(work_dir)
+
+                # Enable isolation for Windows platforms (no Docker available)
+                is_windows = platform_name in ("windows", "windows_portable")
+                isolation = WindowsIsolation(work_path, self._log) if is_windows else None
+                if isolation:
+                    isolation.setup()
 
                 # === INSTALL LEVEL ===
                 # Always run install if any later level needs it
@@ -434,10 +488,13 @@ class TestManager:
                         self._log(f"Capturing {total_screenshots} static screenshot(s)...")
 
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies
+                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
+                            # Auto-install playwright if missing
+                            if not ensure_dependencies(log_callback=self._log):
+                                raise ImportError("Failed to install screenshot dependencies")
                             check_dependencies()
 
-                            screenshots_dir = self.node_dir / ".comfy-test" / "screenshots"
+                            screenshots_dir = self._get_output_base() / "screenshots"
                             screenshots_dir.mkdir(parents=True, exist_ok=True)
 
                             ws = WorkflowScreenshot(server.base_url, log_callback=self._log)
@@ -468,7 +525,10 @@ class TestManager:
                         self._log(f"Validating {total_workflows} workflow(s)...")
 
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies
+                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
+                            # Auto-install playwright if missing
+                            if not ensure_dependencies(log_callback=self._log):
+                                raise ImportError("Failed to install screenshot dependencies")
                             check_dependencies()
 
                             ws = WorkflowScreenshot(server.base_url, log_callback=self._log)
@@ -534,21 +594,24 @@ class TestManager:
                         screenshots_dir = None
                         videos_dir = None
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies
+                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
+                            # Auto-install playwright if missing
+                            if not ensure_dependencies(log_callback=self._log):
+                                raise ImportError("Failed to install screenshot dependencies")
                             check_dependencies()
                             ws = WorkflowScreenshot(server.base_url, log_callback=capture_log)
                             ws.start()
                             # Create screenshots and videos output directories
-                            screenshots_dir = self.node_dir / ".comfy-test" / "screenshots"
+                            screenshots_dir = self._get_output_base() / "screenshots"
                             screenshots_dir.mkdir(parents=True, exist_ok=True)
-                            videos_dir = self.node_dir / ".comfy-test" / "videos"
+                            videos_dir = self._get_output_base() / "videos"
                             videos_dir.mkdir(parents=True, exist_ok=True)
                         except ImportError:
                             self._log("WARNING: Screenshots disabled (playwright not installed)")
 
                         # Initialize results tracking
                         results = []
-                        logs_dir = self.node_dir / ".comfy-test" / "logs"
+                        logs_dir = self._get_output_base() / "logs"
                         logs_dir.mkdir(parents=True, exist_ok=True)
 
                         # Get hardware info once for all workflows that run on this machine
@@ -651,13 +714,13 @@ class TestManager:
                             },
                             "workflows": results
                         }
-                        results_file = self.node_dir / ".comfy-test" / "results.json"
+                        results_file = self._get_output_base() / "results.json"
                         results_file.write_text(json.dumps(results_data, indent=2))
                         self._log(f"Results saved to {results_file}")
 
                         # Generate HTML report
                         from ..report import generate_html_report
-                        html_file = generate_html_report(self.node_dir / ".comfy-test", self.node_dir.name)
+                        html_file = generate_html_report(self._get_output_base(), self.node_dir.name)
                         self._log(f"Saved: {html_file}")
 
                         if all_errors:
@@ -667,10 +730,17 @@ class TestManager:
                             )
                         self._log_level_done(TestLevel.EXECUTION, "PASSED")
 
+                # Teardown isolation on success
+                if isolation:
+                    isolation.teardown()
+
             self._log(f"\n{platform_name}: PASSED")
             return TestResult(platform_name, True)
 
         except TestError as e:
+            # Teardown isolation on error
+            if 'isolation' in locals() and isolation:
+                isolation.teardown()
             self._log(f"\n{platform_name}: FAILED")
             self._log(f"Error: {e.message}")
             if e.details:
@@ -678,9 +748,16 @@ class TestManager:
             return TestResult(platform_name, False, str(e.message), e.details)
 
         except Exception as e:
+            # Teardown isolation on error
+            if 'isolation' in locals() and isolation:
+                isolation.teardown()
             self._log(f"\n{platform_name}: FAILED (unexpected error)")
             self._log(f"Error: {e}")
             return TestResult(platform_name, False, str(e))
+
+        finally:
+            # ALWAYS save session log (even on failure/error)
+            self._save_session_log()
 
     def _dry_run(self, platform_name: str, levels: List[TestLevel]) -> TestResult:
         """Show what would be done without doing it."""
@@ -1039,6 +1116,10 @@ print(json.dumps(result))
         self._log(f"Level: {level.value}")
         self._log(f"{'='*60}")
 
+        # Enable isolation for Windows platforms
+        is_windows = platform_name in ("windows", "windows_portable")
+        isolation = None
+
         try:
             # === SYNTAX LEVEL ===
             if level == TestLevel.SYNTAX:
@@ -1061,6 +1142,11 @@ print(json.dumps(result))
 
                 platform = get_platform(platform_name, self._log)
                 work_dir.mkdir(parents=True, exist_ok=True)
+
+                # Set up isolation for Windows
+                if is_windows:
+                    isolation = WindowsIsolation(work_dir, self._log)
+                    isolation.setup()
 
                 self._log("Setting up ComfyUI...")
                 paths = platform.setup_comfyui(self.config, work_dir)
@@ -1105,6 +1191,10 @@ print(json.dumps(result))
                 save_state(state, work_dir)
                 self._log(f"State saved to {work_dir / 'state.json'}")
 
+                # Teardown isolation on success
+                if isolation:
+                    isolation.teardown()
+
                 self._log(f"[{level.value.upper()}] PASSED")
                 return TestResult(platform_name, True)
 
@@ -1141,6 +1231,11 @@ print(json.dumps(result))
 
             platform = get_platform(platform_name, self._log)
             platform_config = self.config.get_platform_config(platform_name)
+
+            # Set up isolation for Windows
+            if is_windows:
+                isolation = WindowsIsolation(work_dir, self._log)
+                isolation.setup()
 
             self._log(f"\n[1/1] {level.value.upper()}")
             self._log("-" * 40)
@@ -1180,10 +1275,13 @@ print(json.dumps(result))
                         self._log(f"Capturing {total_screenshots} static screenshot(s)...")
 
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies
+                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
+                            # Auto-install playwright if missing
+                            if not ensure_dependencies(log_callback=self._log):
+                                raise ImportError("Failed to install screenshot dependencies")
                             check_dependencies()
 
-                            screenshots_dir = self.node_dir / ".comfy-test" / "screenshots"
+                            screenshots_dir = self._get_output_base() / "screenshots"
                             screenshots_dir.mkdir(parents=True, exist_ok=True)
 
                             ws = WorkflowScreenshot(server.base_url, log_callback=self._log)
@@ -1228,21 +1326,24 @@ print(json.dumps(result))
                         screenshots_dir = None
                         videos_dir = None
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies
+                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
+                            # Auto-install playwright if missing
+                            if not ensure_dependencies(log_callback=self._log):
+                                raise ImportError("Failed to install screenshot dependencies")
                             check_dependencies()
                             ws = WorkflowScreenshot(server.base_url, log_callback=capture_log)
                             ws.start()
                             # Create screenshots and videos output directories
-                            screenshots_dir = self.node_dir / ".comfy-test" / "screenshots"
+                            screenshots_dir = self._get_output_base() / "screenshots"
                             screenshots_dir.mkdir(parents=True, exist_ok=True)
-                            videos_dir = self.node_dir / ".comfy-test" / "videos"
+                            videos_dir = self._get_output_base() / "videos"
                             videos_dir.mkdir(parents=True, exist_ok=True)
                         except ImportError:
                             self._log("WARNING: Screenshots disabled (playwright not installed)")
 
                         # Initialize results tracking
                         results = []
-                        logs_dir = self.node_dir / ".comfy-test" / "logs"
+                        logs_dir = self._get_output_base() / "logs"
                         logs_dir.mkdir(parents=True, exist_ok=True)
 
                         # Get hardware info once for all workflows that run on this machine
@@ -1345,13 +1446,13 @@ print(json.dumps(result))
                             },
                             "workflows": results
                         }
-                        results_file = self.node_dir / ".comfy-test" / "results.json"
+                        results_file = self._get_output_base() / "results.json"
                         results_file.write_text(json.dumps(results_data, indent=2))
                         self._log(f"Results saved to {results_file}")
 
                         # Generate HTML report
                         from ..report import generate_html_report
-                        html_file = generate_html_report(self.node_dir / ".comfy-test", self.node_dir.name)
+                        html_file = generate_html_report(self._get_output_base(), self.node_dir.name)
                         self._log(f"Saved: {html_file}")
 
                         if all_errors:
@@ -1360,10 +1461,17 @@ print(json.dumps(result))
                                 [f"{name}: {err}" for name, err in all_errors]
                             )
 
+            # Teardown isolation on success
+            if isolation:
+                isolation.teardown()
+
             self._log(f"[{level.value.upper()}] PASSED")
             return TestResult(platform_name, True)
 
         except TestError as e:
+            # Teardown isolation on error
+            if isolation:
+                isolation.teardown()
             self._log(f"\n{platform_name}: FAILED")
             self._log(f"Error: {e.message}")
             if e.details:
@@ -1371,6 +1479,9 @@ print(json.dumps(result))
             return TestResult(platform_name, False, str(e.message), e.details)
 
         except Exception as e:
+            # Teardown isolation on error
+            if isolation:
+                isolation.teardown()
             self._log(f"\n{platform_name}: FAILED (unexpected error)")
             self._log(f"Error: {e}")
             return TestResult(platform_name, False, str(e))

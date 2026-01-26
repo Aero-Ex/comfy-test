@@ -75,7 +75,7 @@ class ComfyUIServer:
         for listener in self._extra_log_listeners:
             listener(msg)
 
-    def start(self, wait_timeout: int = 60) -> None:
+    def start(self, wait_timeout: int = 300) -> None:
         """Start the ComfyUI server and wait for it to be ready.
 
         Args:
@@ -113,37 +113,37 @@ class ComfyUIServer:
         self._wait_for_ready(wait_timeout)
 
     def _read_output(self) -> None:
-        """Read and log server output in a background thread."""
+        """Read and log server output using threads (Windows-compatible)."""
         if not self._process:
             return
-        try:
-            # Read both stdout and stderr
-            import selectors
-            sel = selectors.DefaultSelector()
-            sel.register(self._process.stdout, selectors.EVENT_READ)
-            sel.register(self._process.stderr, selectors.EVENT_READ)
 
-            while not self._stop_output_thread:
-                for key, _ in sel.select(timeout=0.1):
-                    line = key.fileobj.readline()
+        def read_stream(stream):
+            """Read from a stream and log each line."""
+            try:
+                for line in iter(stream.readline, ''):
+                    if self._stop_output_thread:
+                        break
                     if line:
                         line_text = line.rstrip()
                         self._output_lines.append(line_text)
                         self._log_all(f"  [ComfyUI] {line_text}")
-                # Check if process ended
-                if self._process.poll() is not None:
-                    # Read remaining output
-                    for line in self._process.stdout:
-                        line_text = line.rstrip()
-                        self._output_lines.append(line_text)
-                        self._log_all(f"  [ComfyUI] {line_text}")
-                    for line in self._process.stderr:
-                        line_text = line.rstrip()
-                        self._output_lines.append(line_text)
-                        self._log_all(f"  [ComfyUI] {line_text}")
-                    break
-        except Exception:
-            pass  # Process may have ended
+            except Exception:
+                pass  # Stream closed
+
+        # Start separate threads for stdout and stderr
+        stdout_thread = threading.Thread(target=read_stream, args=(self._process.stdout,), daemon=True)
+        stderr_thread = threading.Thread(target=read_stream, args=(self._process.stderr,), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+
+        # Wait for process to end or stop signal
+        while not self._stop_output_thread:
+            if self._process.poll() is not None:
+                # Give threads a moment to finish reading
+                stdout_thread.join(timeout=1)
+                stderr_thread.join(timeout=1)
+                break
+            time.sleep(0.1)
 
     def _wait_for_ready(self, timeout: int) -> None:
         """Wait for server to become responsive.
