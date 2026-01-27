@@ -14,5 +14,6 @@ gpu = "all"
 
 [test.platforms]
 linux = true
+macos = true
 windows = true
 windows_portable = true

@@ -14,7 +14,7 @@ def get_platform(
     Get the appropriate platform provider.
 
     Args:
-        name: Platform name ('linux', 'windows', 'windows_portable', 'windows-portable')
+        name: Platform name ('linux', 'macos', 'windows', 'windows_portable', 'windows-portable')
               If None, auto-detects current platform.
         log_callback: Optional callback for logging messages
 
@@ -37,6 +37,9 @@ def get_platform(
     if name == "linux":
         from .linux import LinuxTestPlatform
         return LinuxTestPlatform(log_callback)
+    elif name == "macos":
+        from .macos import MacOSTestPlatform
+        return MacOSTestPlatform(log_callback)
     elif name == "windows":
         from .windows import WindowsTestPlatform
         return WindowsTestPlatform(log_callback)
@@ -44,14 +47,14 @@ def get_platform(
         if sys.platform != "win32":
             raise ValueError(
                 "windows_portable tests can only run on Windows. "
-                "On Linux/macOS, use the 'linux' or 'windows' platform instead."
+                "On Linux/macOS, use the 'linux' or 'macos' platform instead."
             )
         from .windows_portable import WindowsPortableTestPlatform
         return WindowsPortableTestPlatform(log_callback)
     else:
         raise ValueError(
             f"Unsupported platform: {name}. "
-            f"Supported: linux, windows, windows_portable"
+            f"Supported: linux, macos, windows, windows_portable"
         )
 
 
@@ -59,10 +62,10 @@ def _detect_platform() -> str:
     """Detect current platform."""
     if sys.platform == "linux":
         return "linux"
+    elif sys.platform == "darwin":
+        return "macos"
     elif sys.platform == "win32":
         return "windows"
-    elif sys.platform == "darwin":
-        raise ValueError("macOS is not currently supported")
     else:
         raise ValueError(f"Unknown platform: {sys.platform}")
 

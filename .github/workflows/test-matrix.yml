@@ -123,6 +123,70 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
 
+  test-macos-cpu:
+    needs: parse-config
+    runs-on: macos-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    steps:
+      - name: Checkout node
+        uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: PozzettiAndrea/comfy-test
+          ref: ${{ inputs.comfy-test-ref }}
+          path: .comfy-test-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.parse-config.outputs.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install comfy-test
+        run: pip install "./.comfy-test-src[screenshot]"
+
+      - name: Install Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform macos --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform macos --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform macos --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform macos --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform macos --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-macos-cpu
+          path: .comfy-test/
+          if-no-files-found: ignore
+          include-hidden-files: true
+
   test-windows-cpu:
     needs: parse-config
     runs-on: windows-latest
@@ -456,12 +520,79 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
 
+  test-macos-gpu:
+    if: ${{ inputs.run-gpu }}
+    needs: parse-config
+    runs-on: [self-hosted, macos, gpu]
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      COMFY_TEST_GPU: "1"
+    steps:
+      - name: Checkout node
+        uses: actions/checkout@v4
+
+      - name: Checkout comfy-test
+        uses: actions/checkout@v4
+        with:
+          repository: PozzettiAndrea/comfy-test
+          ref: ${{ inputs.comfy-test-ref }}
+          path: .comfy-test-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ needs.parse-config.outputs.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install comfy-test
+        run: pip install "./.comfy-test-src[screenshot]"
+
+      - name: Install Playwright
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Syntax
+        id: syntax
+        run: comfy-test run --platform macos --only-level syntax -c ${{ inputs.config-file }}
+
+      - name: Install
+        id: install
+        if: always()
+        run: comfy-test run --platform macos --only-level install --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+
+      - name: Registration
+        id: registration
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform macos --only-level registration --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Instantiation
+        id: instantiation
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform macos --only-level instantiation --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Execution
+        id: execution
+        if: always() && steps.install.outcome == 'success'
+        run: comfy-test run --platform macos --only-level execution --work-dir .comfy-test-env --skip-setup -c ${{ inputs.config-file }}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-macos-gpu
+          path: .comfy-test/
+          if-no-files-found: ignore
+          include-hidden-files: true
+
   # =============================================================================
   # Publish to gh-pages
   # =============================================================================
 
   publish:
-    needs: [test-linux-cpu, test-windows-cpu, test-windows-portable-cpu]
+    needs: [test-linux-cpu, test-macos-cpu, test-windows-cpu, test-windows-portable-cpu]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -521,6 +652,8 @@ jobs:
               const platforms = [
                 { id: 'linux-cpu', label: 'Linux CPU' },
                 { id: 'linux-gpu', label: 'Linux GPU' },
+                { id: 'macos-cpu', label: 'macOS CPU' },
+                { id: 'macos-gpu', label: 'macOS GPU' },
                 { id: 'windows-cpu', label: 'Windows CPU' },
                 { id: 'windows-gpu', label: 'Windows GPU' },
                 { id: 'windows-portable-cpu', label: 'Win Portable CPU' },
