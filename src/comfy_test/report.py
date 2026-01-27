@@ -283,9 +283,9 @@ def _render_report(
     # Build video frames JSON for JavaScript
     video_data_js = json.dumps(video_data)
 
-    # Platform tabs (only if multi-platform)
-    platform_tabs_css = _get_platform_tabs_css() if current_platform else ""
-    platform_tabs_html = _generate_platform_tabs_html(current_platform) if current_platform else ""
+    # Platform tabs disabled - root index handles navigation
+    platform_tabs_css = ""
+    platform_tabs_html = ""
 
     return f'''<!DOCTYPE html>
 <html lang="en">
@@ -1171,12 +1171,11 @@ def _render_workflow_cards(
 PLATFORMS = [
     {'id': 'linux-cpu', 'label': 'Linux CPU'},
     {'id': 'linux-gpu', 'label': 'Linux GPU'},
-    {'id': 'macos-cpu', 'label': 'macOS CPU'},
-    {'id': 'macos-gpu', 'label': 'macOS GPU'},
     {'id': 'windows-cpu', 'label': 'Windows CPU'},
     {'id': 'windows-gpu', 'label': 'Windows GPU'},
     {'id': 'windows-portable-cpu', 'label': 'Win Portable CPU'},
     {'id': 'windows-portable-gpu', 'label': 'Win Portable GPU'},
+    {'id': 'macos-cpu', 'label': 'macOS CPU'},
 ]
 
 
@@ -1201,15 +1200,16 @@ def generate_root_index(output_dir: Path, repo_name: Optional[str] = None) -> Pa
 <head>
   <title>{html.escape(title)}</title>
   <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #1a1a2e; color: #eee; }}
+    * {{ box-sizing: border-box; }}
+    html, body {{ height: 100%; margin: 0; }}
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; background: #1a1a2e; color: #eee; display: flex; flex-direction: column; }}
     .tabs {{ display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; }}
     .tab {{ padding: 10px 20px; background: #16213e; border: none; color: #888; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; }}
     .tab:hover {{ background: #1f3460; color: #fff; }}
     .tab.active {{ background: #0f3460; color: #fff; }}
     .tab.available {{ color: #4ade80; }}
     .tab.unavailable {{ color: #666; cursor: not-allowed; }}
-    .content {{ background: #16213e; border-radius: 0 8px 8px 8px; padding: 20px; min-height: 400px; }}
-    iframe {{ width: 100%; height: 600px; border: none; border-radius: 4px; background: #1a1a2e; }}
+    iframe {{ flex: 1; width: 100%; border: none; background: #1a1a2e; }}
     h1 {{ margin: 0 0 20px 0; font-size: 24px; }}
     .legend {{ display: flex; gap: 20px; margin-bottom: 15px; font-size: 12px; }}
     .legend span {{ display: flex; align-items: center; gap: 6px; }}
@@ -1225,9 +1225,7 @@ def generate_root_index(output_dir: Path, repo_name: Optional[str] = None) -> Pa
     <span><span class="dot unavailable"></span> No results yet</span>
   </div>
   <div class="tabs" id="tabs"></div>
-  <div class="content">
-    <iframe id="frame" src="about:blank"></iframe>
-  </div>
+  <iframe id="frame" src="about:blank"></iframe>
   <script>
     const platforms = {platforms_json};
     const tabs = document.getElementById('tabs');
