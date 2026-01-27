@@ -665,6 +665,12 @@ def run_local(
             work_workflow_dir.mkdir(parents=True, exist_ok=True)
             target = work_workflow_dir / "test-matrix.yml"
             shutil.copy(local_workflow, target)
+            # Make workflow file unique per run to ensure unique container names
+            # (act derives container name hash from workflow content)
+            run_id = Path(temp_dir).name
+            content = target.read_text()
+            content = f"# run-id: {run_id}\n" + content
+            target.write_text(content)
 
         # Pre-build wheels on host (avoids hatchling issues in Docker)
         wheel_dir = work_dir / ".wheels"
@@ -703,8 +709,8 @@ def run_local(
         if gpu:
             container_opts.append("--gpus all")
 
-        # Build command (use temp dir for action cache to avoid stale state)
-        action_cache_dir = Path.home() / ".cache" / "act"
+        # Use unique action cache per run to enable concurrent execution
+        action_cache_dir = Path(temp_dir) / ".cache" / "act"
         # Use unique toolcache path to isolate concurrent runs
         toolcache_path = f"/tmp/toolcache-{Path(temp_dir).name}" if not is_windows_host else f"C:\\temp\\toolcache-{Path(temp_dir).name}"
 
