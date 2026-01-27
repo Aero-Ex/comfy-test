@@ -1,5 +1,6 @@
 """Test manager for orchestrating installation tests."""
 
+import faulthandler
 import json
 import os
 import sys
@@ -234,11 +235,13 @@ class TestManager:
         self._original_log(msg)  # Print without timestamp (cleaner terminal)
         self._session_log.append(timestamped_msg)
 
-        # Write to file immediately (live updates)
+        # Write to file immediately (live updates) with fsync to ensure crash survival
         if self._session_log_file:
             try:
                 with open(self._session_log_file, "a", encoding="utf-8") as f:
                     f.write(timestamped_msg + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())
             except Exception:
                 pass  # Don't fail on log write errors
 
@@ -271,12 +274,14 @@ class TestManager:
         self,
         dry_run: bool = False,
         level: Optional[TestLevel] = None,
+        workflow_filter: Optional[str] = None,
     ) -> List[TestResult]:
         """Run tests on all enabled platforms.
 
         Args:
             dry_run: If True, only show what would be done
             level: Maximum test level to run (None = all levels + workflows)
+            workflow_filter: If specified, only run this workflow
 
         Returns:
             List of TestResult for each platform
@@ -294,7 +299,7 @@ class TestManager:
                 self._log(f"Skipping {platform_name} (disabled)")
                 continue
 
-            result = self.run_platform(platform_name, dry_run, level)
+            result = self.run_platform(platform_name, dry_run, level, workflow_filter)
             results.append(result)
 
         return results
@@ -304,6 +309,7 @@ class TestManager:
         platform_name: str,
         dry_run: bool = False,
         level: Optional[TestLevel] = None,
+        workflow_filter: Optional[str] = None,
     ) -> TestResult:
         """Run tests on a specific platform.
 
@@ -311,6 +317,7 @@ class TestManager:
             platform_name: Platform to test ('linux', 'windows', 'windows_portable')
             dry_run: If True, only show what would be done
             level: Maximum test level to run (CLI override, None = use config levels)
+            workflow_filter: If specified, only run this workflow (e.g., 'fix_normals.json')
 
         Returns:
             TestResult for the platform
@@ -350,6 +357,12 @@ class TestManager:
         self._session_log_file = output_base / "session.log"
         self._session_log_file.write_text("", encoding="utf-8")  # Clear existing
 
+        # Enable crash dump logging - captures Python stack trace on SIGSEGV/SIGABRT
+        crash_log_path = output_base / "crash_dump.log"
+        self._crash_log_file = open(crash_log_path, "w")
+        faulthandler.enable(file=self._crash_log_file)
+        self._log(f"Crash dump logging enabled: {crash_log_path}")
+
         try:
             # === SYNTAX LEVEL ===
             if TestLevel.SYNTAX not in config_levels:
@@ -366,6 +379,13 @@ class TestManager:
                 TestLevel.EXECUTION
             ])
             workflows = self.config.workflow.workflows
+
+            # Filter to specific workflow if requested
+            if workflow_filter and workflows:
+                workflows = [w for w in workflows if w == workflow_filter or Path(w).name == workflow_filter]
+                if not workflows:
+                    raise TestError(f"Workflow not found: {workflow_filter}")
+                self._log(f"Workflow filter: running only {workflows[0]}")
 
             if not needs_install and not workflows:
                 # Only syntax was requested and no workflows
@@ -621,6 +641,9 @@ class TestManager:
                             runner = WorkflowRunner(api, capture_log)
                             all_errors = []
                             for idx, workflow_file in enumerate(self.config.workflow.workflows, 1):
+                                # Clear execution cache before each workflow to prevent state accumulation
+                                api.free_memory(unload_models=False)
+
                                 # Reset workflow log for this workflow
                                 current_workflow_log.clear()
                                 # Register capture_log to receive [ComfyUI] output
@@ -922,8 +945,13 @@ class TestManager:
         # Use proper package import by adding custom_nodes to sys.path
         script = '''
 import sys
+import os
 import json
 from pathlib import Path
+
+# Disable CUDA to prevent crashes on CPU-only machines
+# (model_management.py calls torch.cuda at import time)
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 # Mock CUDA packages if needed
 cuda_packages = {cuda_packages_json}
@@ -1353,6 +1381,9 @@ print(json.dumps(result))
                             runner = WorkflowRunner(api, capture_log)
                             all_errors = []
                             for idx, workflow_file in enumerate(self.config.workflow.workflows, 1):
+                                # Clear execution cache before each workflow to prevent state accumulation
+                                api.free_memory(unload_models=False)
+
                                 # Reset workflow log for this workflow
                                 current_workflow_log.clear()
                                 # Register capture_log to receive [ComfyUI] output

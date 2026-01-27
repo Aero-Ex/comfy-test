@@ -275,6 +275,8 @@ class WindowsTestPlatform(TestPlatform):
             str(paths.comfyui_dir / "main.py"),
             "--listen", "127.0.0.1",
             "--port", str(port),
+            "--verbose", "DEBUG",  # Enable detailed logging
+            "--log-stdout",        # Send logs to stdout for capture
         ]
 
         # Use CPU mode unless GPU mode is explicitly enabled

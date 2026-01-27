@@ -22,7 +22,7 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
-from .errors import TestError
+from .errors import TestError, WorkflowError
 
 if TYPE_CHECKING:
     from .test.platform.base import TestPaths, TestPlatform
@@ -867,7 +867,15 @@ class WorkflowScreenshot:
 
                 if state["complete"]:
                     if state["error"]:
-                        self._log(f"  Execution error: {state['error']}")
+                        error_data = state["error"]
+                        if isinstance(error_data, dict):
+                            error_msg = error_data.get("message", str(error_data))
+                            node_error = error_data.get("node_type")
+                        else:
+                            error_msg = str(error_data)
+                            node_error = None
+                        self._log(f"  Execution error: {error_msg}")
+                        raise WorkflowError(f"Workflow execution failed: {error_msg}", workflow_file=str(workflow_path), node_error=node_error)
                     break
 
                 self._page.wait_for_timeout(10)
@@ -908,6 +916,7 @@ class WorkflowScreenshot:
         log_lines: Optional[List[str]] = None,
         final_screenshot_path: Optional[Path] = None,
         final_screenshot_delay_ms: int = 5000,
+        timeout: int = 300,
     ) -> List[Path]:
         """Capture workflow execution as individual WebP frames for slider playback.
 
@@ -943,6 +952,16 @@ class WorkflowScreenshot:
             raise ScreenshotError(f"Failed to load workflow: {workflow_path}", str(e))
 
         self._log(f"Capturing execution frames: {workflow_path.name}")
+
+        # Clear execution cache to prevent state accumulation between workflows
+        try:
+            requests.post(
+                f"{self.server_url}/free",
+                json={"unload_models": False, "free_memory": True},
+                timeout=5,
+            )
+        except Exception:
+            pass  # Best effort
 
         # Set server-side setting to prevent Templates panel from showing
         self._disable_first_run_tutorial()
@@ -1043,12 +1062,13 @@ class WorkflowScreenshot:
             self._log("  Queuing workflow for execution...")
             self._page.evaluate("window.app.queuePrompt(0)")
 
-            # Capture loop - periodic screenshots
+            # Capture loop - periodic screenshots with timeout
             last_screenshot_time = 0
             frame_num = 1
             screenshot_interval_ms = 100  # Capture every 100ms
+            timed_out = False
 
-            while True:
+            while time.time() - capture_start < timeout:
                 current_time = time.time()
                 elapsed = current_time - capture_start
 
@@ -1071,10 +1091,22 @@ class WorkflowScreenshot:
 
                 if state["complete"]:
                     if state["error"]:
-                        self._log(f"  Execution error: {state['error']}")
+                        error_data = state["error"]
+                        if isinstance(error_data, dict):
+                            error_msg = error_data.get("message", str(error_data))
+                            node_error = error_data.get("node_type")
+                        else:
+                            error_msg = str(error_data)
+                            node_error = None
+                        self._log(f"  Execution error: {error_msg}")
+                        raise WorkflowError(f"Workflow execution failed: {error_msg}", workflow_file=str(workflow_path), node_error=node_error)
                     break
 
                 self._page.wait_for_timeout(20)
+            else:
+                # Timeout reached
+                timed_out = True
+                self._log(f"  WARNING: Workflow execution timeout after {timeout}s")
 
             # Final frame after completion
             self._page.wait_for_timeout(1000)

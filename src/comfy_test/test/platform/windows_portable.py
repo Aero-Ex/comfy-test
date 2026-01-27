@@ -19,6 +19,114 @@ if TYPE_CHECKING:
 PORTABLE_RELEASE_URL = "https://github.com/comfyanonymous/ComfyUI/releases/download/{version}/ComfyUI_windows_portable_nvidia.7z"
 PORTABLE_LATEST_API = "https://api.github.com/repos/comfyanonymous/ComfyUI/releases/latest"
 
+# Local dev packages to build wheels for (only comfy-env needed for junction fix)
+LOCAL_DEV_PACKAGES = [
+    ("comfy-env", Path.home() / "Desktop" / "utils" / "comfy-env"),
+]
+
+
+def _build_local_wheels(work_dir: Path, log) -> Optional[Path]:
+    """Build wheels for local dev packages if they exist.
+
+    Uses system Python (not embedded) because it has hatchling installed.
+    Returns the wheel directory path, or None if no local packages found.
+    """
+    import sys
+    wheel_dir = work_dir / "local_wheels"
+
+    found_any = False
+    for name, path in LOCAL_DEV_PACKAGES:
+        if path.exists():
+            if not found_any:
+                wheel_dir.mkdir(parents=True, exist_ok=True)
+                found_any = True
+
+            log(f"Building {name} wheel...")
+            try:
+                # Use system Python (has hatchling) not embedded Python
+                subprocess.run(
+                    [sys.executable, "-m", "pip", "wheel", str(path), "--no-deps", "--no-cache-dir", "-w", str(wheel_dir)],
+                    capture_output=True,
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                log(f"  Warning: Failed to build {name} wheel: {e.stderr}")
+
+    return wheel_dir if found_any else None
+
+
+def _gitignore_filter(base_dir: Path, work_dir: Path = None):
+    """Create a shutil.copytree ignore function based on .gitignore patterns."""
+    import fnmatch
+    from typing import List
+
+    # Always ignore these (essential for clean copy)
+    always_ignore = {'.git', '__pycache__', '.comfy-test', '.comfy-test-env',
+                     '.comfy-test-logs', '.venv', 'venv', 'node_modules'}
+
+    # Parse .gitignore if it exists
+    gitignore_patterns = []
+    gitignore_file = base_dir / ".gitignore"
+    if gitignore_file.exists():
+        for line in gitignore_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            # Skip comments and empty lines
+            if not line or line.startswith('#'):
+                continue
+            # Remove trailing slashes (we match both files and dirs)
+            pattern = line.rstrip('/')
+            gitignore_patterns.append(pattern)
+
+    def ignore_func(directory: str, names: List[str]) -> List[str]:
+        ignored = []
+        try:
+            rel_dir = Path(directory).relative_to(base_dir) if directory != str(base_dir) else Path('.')
+        except ValueError:
+            rel_dir = Path('.')
+
+        for name in names:
+            # Always ignore these
+            if name in always_ignore:
+                ignored.append(name)
+                continue
+
+            # Skip the work_dir if it's inside the source
+            if work_dir:
+                full_path = Path(directory) / name
+                try:
+                    if full_path.resolve() == work_dir.resolve():
+                        ignored.append(name)
+                        continue
+                except (OSError, ValueError):
+                    pass
+
+            # Check gitignore patterns
+            rel_path = rel_dir / name
+            for pattern in gitignore_patterns:
+                # Match against filename and relative path
+                if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(str(rel_path), pattern):
+                    ignored.append(name)
+                    break
+                # Handle patterns like "dir/" matching directories
+                if pattern.endswith('/') and fnmatch.fnmatch(name, pattern[:-1]):
+                    ignored.append(name)
+                    break
+                # Handle patterns starting with * like _env_*
+                if '*' in pattern and fnmatch.fnmatch(name, pattern):
+                    ignored.append(name)
+                    break
+
+        return ignored
+
+    return ignore_func
+
+
+def _get_cache_dir() -> Path:
+    """Get persistent cache directory for portable downloads."""
+    cache_dir = Path.home() / ".comfy-test" / "cache" / "portable"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
 
 class WindowsPortableTestPlatform(TestPlatform):
     """Windows Portable platform implementation for ComfyUI testing."""
@@ -36,8 +144,9 @@ class WindowsPortableTestPlatform(TestPlatform):
         Set up ComfyUI Portable for testing on Windows.
 
         1. Determine version to download
-        2. Download 7z archive from GitHub releases
-        3. Extract with py7zr
+        2. Download 7z archive from GitHub releases (cached)
+        3. Extract with 7z CLI (cached)
+        4. Copy to work_dir for this test run
         """
         work_dir = Path(work_dir).resolve()
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -49,17 +158,44 @@ class WindowsPortableTestPlatform(TestPlatform):
         if version == "latest":
             version = self._get_latest_release_tag()
 
-        # Download portable archive
-        archive_path = work_dir / f"ComfyUI_portable_{version}.7z"
+        # Use persistent cache directory
+        cache_dir = _get_cache_dir()
+        archive_path = cache_dir / f"ComfyUI_portable_{version}.7z"
+        cached_extract_dir = cache_dir / f"ComfyUI_portable_{version}"
+
+        # Download if not cached
         if not archive_path.exists():
             self._download_portable(version, archive_path)
+        else:
+            self._log(f"Using cached archive: {archive_path}")
 
-        # Extract archive
-        extract_dir = work_dir / "ComfyUI_portable"
-        if extract_dir.exists():
-            shutil.rmtree(extract_dir)
+        # Extract if not cached (check for ComfyUI_windows_portable subdir)
+        if not cached_extract_dir.exists() or not any(cached_extract_dir.iterdir()):
+            self._log(f"Extracting to cache: {cached_extract_dir}")
+            if cached_extract_dir.exists():
+                shutil.rmtree(cached_extract_dir)
+            self._extract_7z(archive_path, cached_extract_dir)
+        else:
+            self._log(f"Using cached extraction: {cached_extract_dir}")
 
-        self._extract_7z(archive_path, extract_dir)
+        # Extract to a fixed location for easier debugging
+        import uuid
+        portable_work_dir = Path.home() / "Desktop" / "portabletest"
+        if portable_work_dir.exists():
+            # Rename old folder and delete in background (faster than blocking rmtree)
+            old_name = f"portabletest_old_{uuid.uuid4().hex[:8]}"
+            old_path = Path.home() / "Desktop" / old_name
+            self._log(f"Moving old folder to {old_name} (deleting in background)...")
+            portable_work_dir.rename(old_path)
+            # Delete in background using cmd /c rd (faster than shutil.rmtree)
+            subprocess.Popen(
+                ["cmd", "/c", "rd", "/s", "/q", str(old_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        self._log(f"Extracting to: {portable_work_dir}")
+        self._extract_7z(archive_path, portable_work_dir)
+        extract_dir = portable_work_dir
 
         # Find ComfyUI directory inside extracted archive
         # Structure is usually: ComfyUI_windows_portable/ComfyUI/
@@ -114,8 +250,9 @@ class WindowsPortableTestPlatform(TestPlatform):
         Install custom node into ComfyUI Portable.
 
         1. Copy to custom_nodes/
-        2. Run install.py if present (using embedded Python)
-        3. Install requirements.txt if present
+        2. Build local dev wheels (comfy-env, etc.)
+        3. Install requirements.txt if present (with local wheels)
+        4. Run install.py if present (using embedded Python)
         """
         node_dir = Path(node_dir).resolve()
         node_name = node_dir.name
@@ -127,26 +264,31 @@ class WindowsPortableTestPlatform(TestPlatform):
         if target_dir.exists():
             shutil.rmtree(target_dir)
 
-        def ignore_patterns(directory, files):
-            ignored = set()
-            for f in files:
-                # Ignore common non-source directories
-                if f in {'.git', '__pycache__', '.venv', 'venv', 'node_modules', '.comfy-test-env'}:
-                    ignored.add(f)
-                # Ignore if this is the work_dir (prevents infinite recursion)
-                if (Path(directory) / f).resolve() == paths.work_dir.resolve():
-                    ignored.add(f)
-            return ignored
+        shutil.copytree(node_dir, target_dir, ignore=_gitignore_filter(node_dir, paths.work_dir))
 
-        shutil.copytree(node_dir, target_dir, ignore=ignore_patterns)
+        # Build local dev wheels (comfy-env with junction fix, etc.)
+        wheel_dir = _build_local_wheels(paths.work_dir, self._log)
 
-        # Install requirements.txt first (install.py may depend on these)
+        # Install local wheels FIRST with --force-reinstall to override any cached PyPI versions
+        # This ensures comfy-env with junction fix is used instead of PyPI version
+        if wheel_dir and wheel_dir.exists():
+            wheel_files = list(wheel_dir.glob("*.whl"))
+            if wheel_files:
+                self._log(f"Installing {len(wheel_files)} local wheel(s) (force-reinstall)...")
+                for whl in wheel_files:
+                    self._log(f"  Installing {whl.name}...")
+                    self._run_command(
+                        [str(paths.python), "-m", "pip", "install", str(whl),
+                         "--force-reinstall", "--no-cache-dir", "--no-deps"],
+                        cwd=target_dir,
+                    )
+
+        # Install requirements.txt (install.py may depend on these)
         requirements_file = target_dir / "requirements.txt"
         if requirements_file.exists():
             self._log("Installing node requirements...")
             self._run_command(
-                [str(paths.python), "-m", "pip", "install",
-                 "-r", str(requirements_file)],
+                [str(paths.python), "-m", "pip", "install", "-r", str(requirements_file)],
                 cwd=target_dir,
             )
 
@@ -274,24 +416,48 @@ class WindowsPortableTestPlatform(TestPlatform):
                 url
             ) from e
 
+    def _find_7z_executable(self) -> Optional[str]:
+        """Find 7z executable on the system."""
+        # Check if 7z is in PATH
+        if shutil.which("7z"):
+            return "7z"
+
+        # Common Windows installation paths
+        import sys
+        if sys.platform == "win32":
+            common_paths = [
+                Path(r"C:\Program Files\7-Zip\7z.exe"),
+                Path(r"C:\Program Files (x86)\7-Zip\7z.exe"),
+                Path.home() / "AppData" / "Local" / "Programs" / "7-Zip" / "7z.exe",
+            ]
+            for path in common_paths:
+                if path.exists():
+                    return str(path)
+
+        return None
+
     def _extract_7z(self, archive: Path, dest: Path) -> None:
         """Extract 7z archive using 7z CLI or py7zr."""
         self._log(f"Extracting {archive.name}...")
 
         # Try 7z command first (handles BCJ2 filter that py7zr doesn't support)
-        if shutil.which("7z"):
+        seven_z = self._find_7z_executable()
+        if seven_z:
             dest.mkdir(parents=True, exist_ok=True)
+            self._log(f"Using 7z: {seven_z}")
             result = subprocess.run(
-                ["7z", "x", str(archive), f"-o{dest}", "-y"],
+                [seven_z, "x", str(archive), f"-o{dest}", "-y"],
                 capture_output=True,
                 text=True,
             )
             if result.returncode == 0:
                 self._log(f"Extracted to {dest}")
                 return
+            else:
+                self._log(f"7z failed: {result.stderr}")
             # Fall through to py7zr if 7z fails
 
-        # Fallback to py7zr
+        # Fallback to py7zr (note: doesn't support BCJ2 filter used in ComfyUI portable)
         try:
             import py7zr
             with py7zr.SevenZipFile(archive, mode="r") as z:
@@ -300,12 +466,13 @@ class WindowsPortableTestPlatform(TestPlatform):
         except ImportError:
             raise SetupError(
                 "7z command not found and py7zr not installed",
-                "Install 7-Zip or run: pip install py7zr"
+                "Install 7-Zip (https://7-zip.org) or run: pip install py7zr"
             )
         except Exception as e:
             raise SetupError(
                 f"Failed to extract {archive}",
-                str(e)
+                f"{e}\n\nNote: ComfyUI portable uses BCJ2 compression which requires 7-Zip.\n"
+                f"Install 7-Zip from https://7-zip.org"
             )
 
     def _find_comfyui_dir(self, extract_dir: Path) -> Optional[Path]:

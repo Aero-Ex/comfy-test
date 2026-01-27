@@ -140,10 +140,11 @@ def cmd_run(args) -> int:
             level = TestLevel(args.level)
 
         # Run tests
+        workflow_filter = getattr(args, 'workflow', None)
         if args.platform:
-            results = [manager.run_platform(args.platform, args.dry_run, level)]
+            results = [manager.run_platform(args.platform, args.dry_run, level, workflow_filter)]
         else:
-            results = manager.run_all(args.dry_run, level)
+            results = manager.run_all(args.dry_run, level, workflow_filter)
 
         # Report results
         print(f"\n{'='*60}")
@@ -718,6 +719,10 @@ def main(args=None) -> int:
         "--gpu",
         action="store_true",
         help="Enable GPU passthrough (with --local)",
+    )
+    run_parser.add_argument(
+        "--workflow", "-W",
+        help="Run only this specific workflow (e.g., fix_normals.json)",
     )
     run_parser.set_defaults(func=cmd_run)
 
