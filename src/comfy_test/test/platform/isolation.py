@@ -133,8 +133,8 @@ def isolated_environment(
     dll_handles = []
 
     try:
-        # 1. Create and set isolated temp directory
-        temp_dir = work_dir / "temp"
+        # 1. Create and set isolated temp directory (use absolute path for subprocess compatibility)
+        temp_dir = (work_dir / "temp").resolve()
         temp_dir.mkdir(parents=True, exist_ok=True)
         os.environ["TEMP"] = str(temp_dir)
         os.environ["TMP"] = str(temp_dir)
@@ -219,8 +219,8 @@ class WindowsIsolation:
         # Save environment
         self._saved_env = os.environ.copy()
 
-        # Set up isolated temp
-        temp_dir = self.work_dir / "temp"
+        # Set up isolated temp (use absolute path to avoid issues with subprocess CWD)
+        temp_dir = (self.work_dir / "temp").resolve()
         temp_dir.mkdir(parents=True, exist_ok=True)
         os.environ["TEMP"] = str(temp_dir)
         os.environ["TMP"] = str(temp_dir)
