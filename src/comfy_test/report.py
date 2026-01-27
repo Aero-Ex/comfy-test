@@ -250,6 +250,7 @@ def _render_report(
     workflows = results.get("workflows", [])
     timestamp = results.get("timestamp", "")
     platform = results.get("platform", "unknown")
+    hardware = results.get("hardware", {})
 
     # Parse timestamp for display
     try:
@@ -257,6 +258,16 @@ def _render_report(
         timestamp_display = dt.strftime("%Y-%m-%d %H:%M UTC")
     except (ValueError, AttributeError):
         timestamp_display = timestamp
+
+    # Build hardware display string
+    hardware_parts = []
+    if hardware.get("os"):
+        hardware_parts.append(hardware["os"])
+    if hardware.get("cpu"):
+        hardware_parts.append(hardware["cpu"])
+    if hardware.get("gpu") and hardware["gpu"] != "None":
+        hardware_parts.append(hardware["gpu"])
+    hardware_display = " | ".join(hardware_parts) if hardware_parts else ""
 
     # Calculate pass rate
     pass_rate = (passed / total * 100) if total > 0 else 0
@@ -804,7 +815,7 @@ def _render_report(
     {platform_tabs_html}
     <header>
         <h1><a href="https://github.com/PozzettiAndrea/{repo_name}">{repo_name}</a> Test Results</h1>
-        <p class="meta">{timestamp_display}</p>
+        <p class="meta">{timestamp_display}{f' | {hardware_display}' if hardware_display else ''}</p>
     </header>
 
     <div class="container">
@@ -1160,6 +1171,8 @@ def _render_workflow_cards(
 PLATFORMS = [
     {'id': 'linux-cpu', 'label': 'Linux CPU'},
     {'id': 'linux-gpu', 'label': 'Linux GPU'},
+    {'id': 'macos-cpu', 'label': 'macOS CPU'},
+    {'id': 'macos-gpu', 'label': 'macOS GPU'},
     {'id': 'windows-cpu', 'label': 'Windows CPU'},
     {'id': 'windows-gpu', 'label': 'Windows GPU'},
     {'id': 'windows-portable-cpu', 'label': 'Win Portable CPU'},
@@ -1168,7 +1181,10 @@ PLATFORMS = [
 
 
 def generate_root_index(output_dir: Path, repo_name: Optional[str] = None) -> Path:
-    """Generate root index.html that redirects to first available platform.
+    """Generate root index.html with platform tabs.
+
+    Creates a tabbed interface that dynamically checks which platforms
+    have results available and allows switching between them.
 
     Args:
         output_dir: Parent directory containing platform subdirectories
@@ -1177,42 +1193,80 @@ def generate_root_index(output_dir: Path, repo_name: Optional[str] = None) -> Pa
     Returns:
         Path to the generated index.html file
     """
-    # Find first available platform
-    first_available = None
-    for p in PLATFORMS:
-        platform_dir = output_dir / p['id']
-        if (platform_dir / 'index.html').exists():
-            first_available = p['id']
-            break
+    title = f"{repo_name} Test Results" if repo_name else "ComfyUI Test Results"
+    platforms_json = json.dumps(PLATFORMS)
 
-    title = f"{repo_name} - Test Results" if repo_name else "ComfyUI Test Results"
-
-    if first_available:
-        # Redirect to first available platform
-        html_content = f'''<!DOCTYPE html>
-<html>
-<head>
-  <meta http-equiv="refresh" content="0; url={first_available}/index.html">
-  <title>{html.escape(title)}</title>
-</head>
-<body>
-  <p>Redirecting to <a href="{first_available}/index.html">{first_available}</a>...</p>
-</body>
-</html>
-'''
-    else:
-        # No results yet
-        html_content = f'''<!DOCTYPE html>
+    html_content = f'''<!DOCTYPE html>
 <html>
 <head>
   <title>{html.escape(title)}</title>
   <style>
-    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 40px; background: #1a1a2e; color: #eee; }}
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background: #1a1a2e; color: #eee; }}
+    .tabs {{ display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; }}
+    .tab {{ padding: 10px 20px; background: #16213e; border: none; color: #888; cursor: pointer; border-radius: 8px 8px 0 0; font-size: 14px; }}
+    .tab:hover {{ background: #1f3460; color: #fff; }}
+    .tab.active {{ background: #0f3460; color: #fff; }}
+    .tab.available {{ color: #4ade80; }}
+    .tab.unavailable {{ color: #666; cursor: not-allowed; }}
+    .content {{ background: #16213e; border-radius: 0 8px 8px 8px; padding: 20px; min-height: 400px; }}
+    iframe {{ width: 100%; height: 600px; border: none; border-radius: 4px; background: #1a1a2e; }}
+    h1 {{ margin: 0 0 20px 0; font-size: 24px; }}
+    .legend {{ display: flex; gap: 20px; margin-bottom: 15px; font-size: 12px; }}
+    .legend span {{ display: flex; align-items: center; gap: 6px; }}
+    .dot {{ width: 10px; height: 10px; border-radius: 50%; }}
+    .dot.available {{ background: #4ade80; }}
+    .dot.unavailable {{ background: #666; }}
   </style>
 </head>
 <body>
   <h1>{html.escape(title)}</h1>
-  <p>No test results available yet.</p>
+  <div class="legend">
+    <span><span class="dot available"></span> Results available</span>
+    <span><span class="dot unavailable"></span> No results yet</span>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div class="content">
+    <iframe id="frame" src="about:blank"></iframe>
+  </div>
+  <script>
+    const platforms = {platforms_json};
+    const tabs = document.getElementById('tabs');
+    const frame = document.getElementById('frame');
+    let activeTab = null;
+
+    async function checkAvailable(id) {{
+      try {{
+        const resp = await fetch(id + '/index.html', {{ method: 'HEAD' }});
+        return resp.ok;
+      }} catch {{ return false; }}
+    }}
+
+    async function init() {{
+      for (const p of platforms) {{
+        const available = await checkAvailable(p.id);
+        const btn = document.createElement('button');
+        btn.className = 'tab ' + (available ? 'available' : 'unavailable');
+        btn.textContent = p.label;
+        btn.onclick = () => {{
+          if (!available) return;
+          document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+          btn.classList.add('active');
+          frame.src = p.id + '/index.html';
+          activeTab = p.id;
+          history.replaceState(null, '', '#' + p.id);
+        }};
+        tabs.appendChild(btn);
+
+        // Auto-select first available or from hash
+        const hash = location.hash.slice(1);
+        if ((hash === p.id || (!activeTab && available)) && available) {{
+          btn.click();
+        }}
+      }}
+    }}
+
+    init();
+  </script>
 </body>
 </html>
 '''

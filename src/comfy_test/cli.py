@@ -338,6 +338,20 @@ def cmd_merge(args) -> int:
     return 0 if success else 1
 
 
+def cmd_generate_index(args) -> int:
+    """Generate root index.html with platform tabs."""
+    from .report import generate_root_index
+
+    output_dir = Path(args.output_dir)
+    if not output_dir.exists():
+        print(f"Output directory not found: {output_dir}", file=sys.stderr)
+        return 1
+
+    index_file = generate_root_index(output_dir, args.repo_name)
+    print(f"Generated: {index_file}")
+    return 0
+
+
 def cmd_publish(args) -> int:
     """Publish results to gh-pages."""
     import shutil
@@ -890,6 +904,21 @@ def main(args=None) -> int:
         help="Merge with existing gh-pages (use for CPU-only CI runs to preserve GPU results)",
     )
     publish_parser.set_defaults(func=cmd_publish)
+
+    # generate-index command
+    generate_index_parser = subparsers.add_parser(
+        "generate-index",
+        help="Generate root index.html with platform tabs for gh-pages",
+    )
+    generate_index_parser.add_argument(
+        "output_dir",
+        help="Directory containing platform subdirectories (e.g., gh-pages)",
+    )
+    generate_index_parser.add_argument(
+        "--repo-name", "-r",
+        help="Repository name for the header (e.g., owner/repo)",
+    )
+    generate_index_parser.set_defaults(func=cmd_generate_index)
 
     parsed_args = parser.parse_args(args)
     return parsed_args.func(parsed_args)

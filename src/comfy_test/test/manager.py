@@ -730,6 +730,7 @@ class TestManager:
                         results_data = {
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                             "platform": platform_name,
+                            "hardware": hardware,
                             "summary": {
                                 "total": len(results),
                                 "passed": passed_count,
@@ -987,10 +988,13 @@ errors = []
 instantiated = []
 
 for name, cls in mappings.items():
+    print(f"Instantiating: {{name}}", flush=True)
     try:
         instance = cls()
         instantiated.append(name)
+        print(f"  OK: {{name}}", flush=True)
     except Exception as e:
+        print(f"  FAILED: {{name}} - {{e}}", flush=True)
         errors.append({{"node": name, "error": str(e)}})
 
 result = {{
@@ -1466,6 +1470,7 @@ print(json.dumps(result))
                         results_data = {
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                             "platform": platform_name,
+                            "hardware": hardware,
                             "summary": {
                                 "total": len(results),
                                 "passed": passed_count,
