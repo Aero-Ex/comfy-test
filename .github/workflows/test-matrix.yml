@@ -121,6 +121,7 @@ jobs:
           name: results-linux-cpu
           path: .comfy-test/
           if-no-files-found: ignore
+          include-hidden-files: true
 
   test-windows-cpu:
     needs: parse-config
@@ -186,6 +187,7 @@ jobs:
           name: results-windows-cpu
           path: .comfy-test/
           if-no-files-found: ignore
+          include-hidden-files: true
 
   test-windows-portable-cpu:
     needs: parse-config
@@ -248,6 +250,7 @@ jobs:
           name: results-windows-portable-cpu
           path: .comfy-test/
           if-no-files-found: ignore
+          include-hidden-files: true
 
   # =============================================================================
   # GPU Tests (Self-hosted runners with GPU)
@@ -318,6 +321,7 @@ jobs:
           name: results-linux-gpu
           path: .comfy-test/
           if-no-files-found: ignore
+          include-hidden-files: true
 
   test-windows-gpu:
     if: ${{ inputs.run-gpu }}
@@ -385,6 +389,7 @@ jobs:
           name: results-windows-gpu
           path: .comfy-test/
           if-no-files-found: ignore
+          include-hidden-files: true
 
   test-windows-portable-gpu:
     if: ${{ inputs.run-gpu }}
@@ -449,6 +454,7 @@ jobs:
           name: results-windows-portable-gpu
           path: .comfy-test/
           if-no-files-found: ignore
+          include-hidden-files: true
 
   # =============================================================================
   # Publish to gh-pages
