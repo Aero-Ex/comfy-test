@@ -665,12 +665,20 @@ def run_local(
             work_workflow_dir.mkdir(parents=True, exist_ok=True)
             target = work_workflow_dir / "test-matrix.yml"
             shutil.copy(local_workflow, target)
-            # Make workflow file unique per run to ensure unique container names
-            # (act derives container name hash from workflow content)
+            # Make workflow file unique per run to ensure unique container/volume names
+            # (act derives container name hash from workflow content, volume from job name)
             run_id = Path(temp_dir).name
+            short_id = run_id.split("-")[-1][:8]  # e.g. "rpjqwysv" from "comfy-test-rpjqwysv"
             content = target.read_text()
             content = f"# run-id: {run_id}\n" + content
+            # Make job names unique to avoid volume collisions in parallel runs
+            content = content.replace("test-linux:", f"test-linux-{short_id}:")
+            content = content.replace("parse-config:", f"parse-config-{short_id}:")
+            content = content.replace("needs: parse-config", f"needs: parse-config-{short_id}")
+            content = content.replace("needs.parse-config.", f"needs.parse-config-{short_id}.")
             target.write_text(content)
+            # Update job_name to match the modified workflow
+            job_name = f"{job_name}-{short_id}"
 
         # Pre-build wheels on host (avoids hatchling issues in Docker)
         wheel_dir = work_dir / ".wheels"
