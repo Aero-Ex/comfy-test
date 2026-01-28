@@ -234,17 +234,11 @@ jobs:
           path: .comfy-test-src
           fetch-depth: 1
 
-      # Cache the ComfyUI Portable 7z archive (~2GB download)
-      - name: Cache ComfyUI Portable
-        uses: actions/cache@v4
-        with:
-          path: ~/.comfy-test/cache/portable
-          key: comfyui-portable-${{ runner.os }}
-
       - name: Setup environment
         uses: ./.comfy-test-src/.github/actions/setup
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
+          platform: windows-portable
 
       - name: Run tests
         run: comfy-test run --platform windows-portable --work-dir .comfy-test-env -c ${{ inputs.config-file }}
@@ -340,14 +334,10 @@ jobs:
           ref: ${{ inputs.comfy-test-ref }}
           path: .comfy-test-src
           fetch-depth: 1
-      # Cache the ComfyUI Portable 7z archive (~2GB download)
-      - uses: actions/cache@v4
-        with:
-          path: ~/.comfy-test/cache/portable
-          key: comfyui-portable-${{ runner.os }}
       - uses: ./.comfy-test-src/.github/actions/setup
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
+          platform: windows-portable
       - run: comfy-test run --platform windows-portable --work-dir .comfy-test-env -c ${{ inputs.config-file }}
       - uses: actions/upload-artifact@v4
         if: always()

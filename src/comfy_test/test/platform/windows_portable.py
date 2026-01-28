@@ -178,7 +178,7 @@ class WindowsPortableTestPlatform(TestPlatform):
         else:
             self._log(f"Using cached extraction: {cached_extract_dir}")
 
-        # Extract to a fixed location for easier debugging
+        # Copy from cache to work directory (much faster than re-extracting 7z)
         import uuid
         portable_work_dir = Path.home() / "Desktop" / "portabletest"
         if portable_work_dir.exists():
@@ -193,8 +193,8 @@ class WindowsPortableTestPlatform(TestPlatform):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        self._log(f"Extracting to: {portable_work_dir}")
-        self._extract_7z(archive_path, portable_work_dir)
+        self._log(f"Copying from cache to: {portable_work_dir}")
+        shutil.copytree(cached_extract_dir, portable_work_dir)
         extract_dir = portable_work_dir
 
         # Find ComfyUI directory inside extracted archive
