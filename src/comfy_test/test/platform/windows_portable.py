@@ -239,6 +239,15 @@ class WindowsPortableTestPlatform(TestPlatform):
             for dll in python_embeded.glob("*.dll"):
                 dll.chmod(dll.stat().st_mode | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
 
+        # Install ComfyUI's requirements (portable may be missing newer deps like sqlalchemy)
+        comfyui_reqs = comfyui_dir / "requirements.txt"
+        if comfyui_reqs.exists():
+            self._log("Installing ComfyUI requirements...")
+            self._run_command(
+                [str(python), "-m", "pip", "install", "-r", str(comfyui_reqs)],
+                cwd=comfyui_dir,
+            )
+
         return TestPaths(
             work_dir=work_dir,
             comfyui_dir=comfyui_dir,

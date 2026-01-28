@@ -29,12 +29,12 @@ def cleanup_comfy_processes() -> int:
 
     # Get list of python processes with ComfyUI in command line
     try:
-        # First, get the PIDs of matching processes
+        # Use Get-CimInstance (modern) instead of Get-WmiObject (deprecated)
         result = subprocess.run(
             ["powershell", "-Command",
-             "Get-Process python -ErrorAction SilentlyContinue | "
-             "Where-Object {$_.Path -and (Get-WmiObject Win32_Process -Filter \"ProcessId=$($_.Id)\").CommandLine -like '*ComfyUI*'} | "
-             "Select-Object -ExpandProperty Id"],
+             "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | "
+             "Where-Object {$_.Name -eq 'python.exe' -and $_.CommandLine -like '*ComfyUI*'} | "
+             "Select-Object -ExpandProperty ProcessId"],
             capture_output=True,
             text=True,
             timeout=30
@@ -56,15 +56,7 @@ def cleanup_comfy_processes() -> int:
         return len(pids)
 
     except (subprocess.TimeoutExpired, Exception):
-        # Fallback: try simpler approach
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/IM", "python.exe", "/FI", "WINDOWTITLE eq ComfyUI*"],
-                capture_output=True,
-                timeout=10
-            )
-        except Exception:
-            pass
+        # Fallback: silently ignore errors - process cleanup is best-effort
         return 0
 
 
