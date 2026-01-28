@@ -28,7 +28,20 @@ runs:
   using: composite
   steps:
     # -------------------------------------------------------------------------
-    # Step 1: Setup Python
+    # Step 1: Try to restore Playwright cache
+    # -------------------------------------------------------------------------
+    - name: Restore Playwright cache
+      id: playwright-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/Library/Caches/ms-playwright
+          ~/AppData/Local/ms-playwright
+        key: playwright-${{ runner.os }}-chromium
+
+    # -------------------------------------------------------------------------
+    # Step 2: Setup Python
     # -------------------------------------------------------------------------
     - name: Setup Python ${{ inputs.python-version }}
       uses: actions/setup-python@v5
@@ -36,35 +49,11 @@ runs:
         python-version: ${{ inputs.python-version }}
 
     # -------------------------------------------------------------------------
-    # Step 2: Install uv (fast pip replacement)
+    # Step 3: Install uv (fast pip replacement)
     # -------------------------------------------------------------------------
     - name: Install uv
       shell: bash
       run: pip install uv
-
-    # -------------------------------------------------------------------------
-    # Step 3: Cache Playwright browser
-    # -------------------------------------------------------------------------
-    # Playwright downloads ~250MB chromium browser. Caching saves 2-3 min.
-    # Cache key is per-OS since browser binaries are platform-specific.
-    - name: Get Playwright cache path
-      id: playwright-cache
-      shell: bash
-      run: |
-        if [ "$RUNNER_OS" = "Windows" ]; then
-          # Use forward slashes for bash compatibility
-          echo "path=$(echo $LOCALAPPDATA | sed 's/\\/\//g')/ms-playwright" >> $GITHUB_OUTPUT
-        elif [ "$RUNNER_OS" = "macOS" ]; then
-          echo "path=$HOME/Library/Caches/ms-playwright" >> $GITHUB_OUTPUT
-        else
-          echo "path=$HOME/.cache/ms-playwright" >> $GITHUB_OUTPUT
-        fi
-
-    - name: Cache Playwright browsers
-      uses: actions/cache@v4
-      with:
-        path: ${{ steps.playwright-cache.outputs.path }}
-        key: playwright-${{ runner.os }}-chromium
 
     # -------------------------------------------------------------------------
     # Step 4: Install comfy-test
@@ -76,11 +65,21 @@ runs:
     # -------------------------------------------------------------------------
     # Step 5: Install Playwright browser
     # -------------------------------------------------------------------------
-    # If cached, this just verifies the browser exists (~1 sec).
-    # If not cached, downloads chromium (~2-3 min).
     - name: Install Playwright
       shell: bash
       run: |
         playwright install chromium
-        # install-deps installs system dependencies - can fail on some systems
         playwright install-deps chromium || true
+
+    # -------------------------------------------------------------------------
+    # Step 6: IMMEDIATELY save cache after download (if it was a miss)
+    # -------------------------------------------------------------------------
+    - name: Save Playwright cache
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          ~/.cache/ms-playwright
+          ~/Library/Caches/ms-playwright
+          ~/AppData/Local/ms-playwright
+        key: playwright-${{ runner.os }}-chromium
