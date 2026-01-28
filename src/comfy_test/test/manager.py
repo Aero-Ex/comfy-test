@@ -275,6 +275,7 @@ class TestManager:
         dry_run: bool = False,
         level: Optional[TestLevel] = None,
         workflow_filter: Optional[str] = None,
+        comfyui_dir: Optional[Path] = None,
     ) -> List[TestResult]:
         """Run tests on all enabled platforms.
 
@@ -282,6 +283,7 @@ class TestManager:
             dry_run: If True, only show what would be done
             level: Maximum test level to run (None = all levels + workflows)
             workflow_filter: If specified, only run this workflow
+            comfyui_dir: Use existing ComfyUI directory (skip clone + requirements install)
 
         Returns:
             List of TestResult for each platform
@@ -300,7 +302,7 @@ class TestManager:
                 self._log(f"Skipping {platform_name} (disabled)")
                 continue
 
-            result = self.run_platform(platform_name, dry_run, level, workflow_filter)
+            result = self.run_platform(platform_name, dry_run, level, workflow_filter, comfyui_dir=comfyui_dir)
             results.append(result)
 
         return results
@@ -311,6 +313,7 @@ class TestManager:
         dry_run: bool = False,
         level: Optional[TestLevel] = None,
         workflow_filter: Optional[str] = None,
+        comfyui_dir: Optional[Path] = None,
     ) -> TestResult:
         """Run tests on a specific platform.
 
@@ -319,6 +322,7 @@ class TestManager:
             dry_run: If True, only show what would be done
             level: Maximum test level to run (CLI override, None = use config levels)
             workflow_filter: If specified, only run this workflow (e.g., 'fix_normals.json')
+            comfyui_dir: Use existing ComfyUI directory (skip clone + requirements install)
 
         Returns:
             TestResult for the platform
@@ -410,8 +414,32 @@ class TestManager:
                 # === INSTALL LEVEL ===
                 # Always run install if any later level needs it
                 self._log_level_start(TestLevel.INSTALL, TestLevel.INSTALL in requested_levels)
-                self._log("Setting up ComfyUI...")
-                paths = platform.setup_comfyui(self.config, work_path)
+
+                if comfyui_dir:
+                    # Use existing ComfyUI directory (skip clone + requirements)
+                    self._log(f"Using existing ComfyUI: {comfyui_dir}")
+                    import sys
+                    comfyui_path = Path(comfyui_dir)
+
+                    # For portable, find embedded Python
+                    if platform_name == "windows_portable":
+                        python_embeded = comfyui_path.parent / "python_embeded"
+                        if not python_embeded.exists():
+                            # Try ComfyUI_windows_portable structure
+                            python_embeded = comfyui_path.parent.parent / "python_embeded"
+                        python_exe = python_embeded / "python.exe"
+                    else:
+                        python_exe = Path(sys.executable)
+
+                    paths = TestPaths(
+                        work_dir=work_path,
+                        comfyui_dir=comfyui_path,
+                        python=python_exe,
+                        custom_nodes_dir=comfyui_path / "custom_nodes",
+                    )
+                else:
+                    self._log("Setting up ComfyUI...")
+                    paths = platform.setup_comfyui(self.config, work_path)
 
                 self._log("Installing custom node...")
                 platform.install_node(paths, self.node_dir)

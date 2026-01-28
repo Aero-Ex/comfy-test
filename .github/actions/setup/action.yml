@@ -1,16 +1,21 @@
 # =============================================================================
-# Composite Action: Setup comfy-test environment
+# Composite Action: Setup ComfyUI test environment
 # =============================================================================
-name: Setup comfy-test environment
-description: Sets up Python, Playwright (cached), and comfy-test
+# Sets up everything needed EXCEPT comfy-test itself:
+# - Python
+# - ComfyUI clone + requirements
+# - Playwright browser
+#
+# All cached together in .comfy-test-env/
+# =============================================================================
+
+name: Setup ComfyUI test environment
+description: Sets up Python, ComfyUI, and Playwright (cached)
 
 inputs:
   python-version:
     description: "Python version to use"
     required: true
-  comfy-test-path:
-    description: "Path to comfy-test checkout"
-    default: "./.comfy-test-src"
   platform:
     description: "Target platform (linux, macos, windows, windows-portable)"
     default: ""
@@ -18,103 +23,57 @@ inputs:
 runs:
   using: composite
   steps:
-    # === RESTORE CACHES ===
-    - name: Restore Playwright cache
-      id: playwright-cache
+    - name: Restore environment cache
+      id: env-cache
       uses: actions/cache/restore@v4
       with:
         path: |
+          .comfy-test-env
           ~/.cache/ms-playwright
           ~/Library/Caches/ms-playwright
           ~/AppData/Local/ms-playwright
-        key: playwright-${{ runner.os }}-chromium
+        key: comfy-env-${{ runner.os }}-py${{ inputs.python-version }}-${{ inputs.platform || 'standard' }}
 
-    - name: Restore pip cache
-      id: pip-cache
-      uses: actions/cache/restore@v4
-      with:
-        path: |
-          ~/.cache/pip
-          ~/Library/Caches/pip
-          ~/AppData/Local/pip/Cache
-        key: pip-${{ runner.os }}-py${{ inputs.python-version }}
-
-    - name: Restore Portable cache
-      if: inputs.platform == 'windows-portable'
-      id: portable-cache
-      uses: actions/cache/restore@v4
-      with:
-        path: ~/.comfy-test/cache/portable
-        key: comfyui-portable-${{ runner.os }}
-
-    # === SETUP ===
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
 
-    - name: Install uv
-      shell: bash
-      run: pip install uv
-
-    - name: Install Playwright browser
-      if: steps.playwright-cache.outputs.cache-hit != 'true'
+    - name: Setup environment
+      if: steps.env-cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
+        mkdir -p .comfy-test-env
+
+        # For portable: download and extract
+        if [ "${{ inputs.platform }}" = "windows-portable" ]; then
+          echo "Downloading ComfyUI Portable..."
+          curl -L --fail -o .comfy-test-env/portable.7z \
+            "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z"
+          echo "Extracting..."
+          "/c/Program Files/7-Zip/7z.exe" x .comfy-test-env/portable.7z -o".comfy-test-env" -y
+          rm .comfy-test-env/portable.7z
+        else
+          # For standard platforms: clone ComfyUI
+          echo "Cloning ComfyUI..."
+          git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git .comfy-test-env/ComfyUI
+          echo "Installing ComfyUI requirements..."
+          pip install -r .comfy-test-env/ComfyUI/requirements.txt
+        fi
+
+        # Install Playwright browser
+        echo "Installing Playwright..."
         pip install playwright
         playwright install chromium
         playwright install-deps chromium || true
 
-    - name: Download and extract Portable
-      if: inputs.platform == 'windows-portable' && steps.portable-cache.outputs.cache-hit != 'true'
-      shell: bash
-      run: |
-        CACHE_DIR="$HOME/.comfy-test/cache/portable"
-        mkdir -p "$CACHE_DIR"
-        VERSION=$(curl -s https://api.github.com/repos/comfyanonymous/ComfyUI/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
-        echo "Latest version: $VERSION"
-        ARCHIVE="$CACHE_DIR/ComfyUI_portable_${VERSION}.7z"
-        EXTRACT_DIR="$CACHE_DIR/ComfyUI_portable_${VERSION}"
-        if [ ! -f "$ARCHIVE" ]; then
-          echo "Downloading..."
-          curl -L -o "$ARCHIVE" "https://github.com/comfyanonymous/ComfyUI/releases/download/${VERSION}/ComfyUI_windows_portable_nvidia.7z"
-        fi
-        if [ ! -d "$EXTRACT_DIR" ] || [ -z "$(ls -A "$EXTRACT_DIR" 2>/dev/null)" ]; then
-          echo "Extracting..."
-          mkdir -p "$EXTRACT_DIR"
-          7z x "$ARCHIVE" -o"$EXTRACT_DIR" -y
-        fi
-        echo "Portable ready at: $EXTRACT_DIR"
-
-    # === SAVE CACHES ===
-    - name: Save Playwright cache
-      if: steps.playwright-cache.outputs.cache-hit != 'true'
+    - name: Save environment cache
+      if: steps.env-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
         path: |
+          .comfy-test-env
           ~/.cache/ms-playwright
           ~/Library/Caches/ms-playwright
           ~/AppData/Local/ms-playwright
-        key: playwright-${{ runner.os }}-chromium
-
-    - name: Save pip cache
-      if: steps.pip-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
-      with:
-        path: |
-          ~/.cache/pip
-          ~/Library/Caches/pip
-          ~/AppData/Local/pip/Cache
-        key: pip-${{ runner.os }}-py${{ inputs.python-version }}
-
-    - name: Save Portable cache
-      if: inputs.platform == 'windows-portable' && steps.portable-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v4
-      with:
-        path: ~/.comfy-test/cache/portable
-        key: comfyui-portable-${{ runner.os }}
-
-    # === INSTALL COMFY-TEST (after caches saved) ===
-    - name: Install comfy-test
-      shell: bash
-      run: pip install "${{ inputs.comfy-test-path }}[screenshot]"
+        key: comfy-env-${{ runner.os }}-py${{ inputs.python-version }}-${{ inputs.platform || 'standard' }}

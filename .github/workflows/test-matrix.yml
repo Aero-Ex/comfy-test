@@ -111,15 +111,19 @@ jobs:
           path: .comfy-test-src
           fetch-depth: 1
 
-      # Setup Python + Playwright with caching
+      # Setup ComfyUI environment (cached)
       - name: Setup environment
         uses: ./.comfy-test-src/.github/actions/setup
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
 
-      # Run all test levels: syntax -> install -> registration -> execution
+      # Install comfy-test (not cached, always fresh from repo)
+      - name: Install comfy-test
+        run: pip install "./.comfy-test-src[screenshot]"
+
+      # Run tests using cached ComfyUI
       - name: Run tests
-        run: comfy-test run --platform linux --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+        run: comfy-test run --platform linux --comfyui-dir .comfy-test-env/ComfyUI -c ${{ inputs.config-file }}
 
       # Upload test results (screenshots, logs, etc.)
       - name: Upload results
@@ -159,8 +163,11 @@ jobs:
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
 
+      - name: Install comfy-test
+        run: pip install "./.comfy-test-src[screenshot]"
+
       - name: Run tests
-        run: comfy-test run --platform macos --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+        run: comfy-test run --platform macos --comfyui-dir .comfy-test-env/ComfyUI -c ${{ inputs.config-file }}
 
       - name: Upload results
         if: always()
@@ -199,8 +206,11 @@ jobs:
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
 
+      - name: Install comfy-test
+        run: pip install "./.comfy-test-src[screenshot]"
+
       - name: Run tests
-        run: comfy-test run --platform windows --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows --comfyui-dir .comfy-test-env/ComfyUI -c ${{ inputs.config-file }}
 
       - name: Upload results
         if: always()
@@ -240,8 +250,11 @@ jobs:
           python-version: ${{ needs.parse-config.outputs.python-version }}
           platform: windows-portable
 
+      - name: Install comfy-test
+        run: pip install "./.comfy-test-src[screenshot]"
+
       - name: Run tests
-        run: comfy-test run --platform windows-portable --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows-portable --comfyui-dir .comfy-test-env/ComfyUI_windows_portable/ComfyUI -c ${{ inputs.config-file }}
 
       - name: Upload results
         if: always()
@@ -277,7 +290,8 @@ jobs:
       - uses: ./.comfy-test-src/.github/actions/setup
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
-      - run: comfy-test run --platform linux --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+      - run: pip install "./.comfy-test-src[screenshot]"
+      - run: comfy-test run --platform linux --comfyui-dir .comfy-test-env/ComfyUI -c ${{ inputs.config-file }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -307,7 +321,8 @@ jobs:
       - uses: ./.comfy-test-src/.github/actions/setup
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
-      - run: comfy-test run --platform windows --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+      - run: pip install "./.comfy-test-src[screenshot]"
+      - run: comfy-test run --platform windows --comfyui-dir .comfy-test-env/ComfyUI -c ${{ inputs.config-file }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -338,7 +353,8 @@ jobs:
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
           platform: windows-portable
-      - run: comfy-test run --platform windows-portable --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+      - run: pip install "./.comfy-test-src[screenshot]"
+      - run: comfy-test run --platform windows-portable --comfyui-dir .comfy-test-env/ComfyUI_windows_portable/ComfyUI -c ${{ inputs.config-file }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -368,7 +384,8 @@ jobs:
       - uses: ./.comfy-test-src/.github/actions/setup
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
-      - run: comfy-test run --platform macos --work-dir .comfy-test-env -c ${{ inputs.config-file }}
+      - run: pip install "./.comfy-test-src[screenshot]"
+      - run: comfy-test run --platform macos --comfyui-dir .comfy-test-env/ComfyUI -c ${{ inputs.config-file }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

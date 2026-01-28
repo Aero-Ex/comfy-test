@@ -141,10 +141,11 @@ def cmd_run(args) -> int:
 
         # Run tests
         workflow_filter = getattr(args, 'workflow', None)
+        comfyui_dir = Path(args.comfyui_dir) if args.comfyui_dir else None
         if args.platform:
-            results = [manager.run_platform(args.platform, args.dry_run, level, workflow_filter)]
+            results = [manager.run_platform(args.platform, args.dry_run, level, workflow_filter, comfyui_dir=comfyui_dir)]
         else:
-            results = manager.run_all(args.dry_run, level, workflow_filter)
+            results = manager.run_all(args.dry_run, level, workflow_filter, comfyui_dir=comfyui_dir)
 
         # Report results
         print(f"\n{'='*60}")
@@ -754,6 +755,10 @@ def main(args=None) -> int:
         "--skip-setup",
         action="store_true",
         help="Skip ComfyUI setup, load state from --work-dir (for resuming after install)",
+    )
+    run_parser.add_argument(
+        "--comfyui-dir",
+        help="Use existing ComfyUI directory instead of cloning (skips clone + requirements install)",
     )
     run_parser.add_argument(
         "--dry-run",

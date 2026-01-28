@@ -15,8 +15,9 @@ if TYPE_CHECKING:
     from ..config import TestConfig
 
 
-# ComfyUI portable release URL pattern
+# ComfyUI portable release URLs
 PORTABLE_RELEASE_URL = "https://github.com/comfyanonymous/ComfyUI/releases/download/{version}/ComfyUI_windows_portable_nvidia.7z"
+PORTABLE_LATEST_URL = "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z"
 PORTABLE_LATEST_API = "https://api.github.com/repos/comfyanonymous/ComfyUI/releases/latest"
 
 # Local dev packages to build wheels for (only comfy-env needed for junction fix)
