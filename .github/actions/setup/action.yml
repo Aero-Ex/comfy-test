@@ -2,16 +2,16 @@
 # Composite Action: Setup ComfyUI test environment
 # =============================================================================
 # Sets up everything needed EXCEPT comfy-test itself:
-# - Python + pip cache
+# - Python + venv with all dependencies
 # - ComfyUI clone + requirements
 # - Playwright browser
 #
-# Cached: ComfyUI clone/portable, Playwright browser
-# Always runs: pip install (fast due to pip download cache)
+# Cached: .comfy-test-env/ (venv + ComfyUI + Playwright browser)
+# On cache hit: instant - no pip install needed
 # =============================================================================
 
 name: Setup ComfyUI test environment
-description: Sets up Python, ComfyUI, and Playwright (cached)
+description: Sets up Python, ComfyUI, and Playwright (cached in venv)
 
 inputs:
   python-version:
@@ -28,7 +28,6 @@ runs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
-        cache: 'pip'
 
     - name: Restore environment cache
       id: env-cache
@@ -39,13 +38,26 @@ runs:
           ~/.cache/ms-playwright
           ~/Library/Caches/ms-playwright
           ~/AppData/Local/ms-playwright
-        key: comfy-env-${{ runner.os }}-py${{ inputs.python-version }}-${{ inputs.platform || 'standard' }}
+        key: comfy-env-v2-${{ runner.os }}-py${{ inputs.python-version }}-${{ inputs.platform || 'standard' }}
 
-    - name: Clone/download ComfyUI
+    - name: Setup environment (cache miss)
       if: steps.env-cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
         mkdir -p .comfy-test-env
+
+        # Create venv
+        echo "Creating venv..."
+        python -m venv .comfy-test-env/venv
+
+        # Activate venv (cross-platform)
+        if [ -f ".comfy-test-env/venv/bin/activate" ]; then
+          source .comfy-test-env/venv/bin/activate
+        else
+          source .comfy-test-env/venv/Scripts/activate
+        fi
+
+        # Clone/download ComfyUI
         if [ "${{ inputs.platform }}" = "windows-portable" ]; then
           echo "Downloading ComfyUI Portable..."
           curl -L --fail -o .comfy-test-env/portable.7z \
@@ -56,27 +68,40 @@ runs:
         else
           echo "Cloning ComfyUI..."
           git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git .comfy-test-env/ComfyUI
+          echo "Installing ComfyUI requirements..."
+          pip install -r .comfy-test-env/ComfyUI/requirements.txt
         fi
 
-    - name: Install ComfyUI requirements
-      if: inputs.platform != 'windows-portable'
-      shell: bash
-      run: |
-        echo "Installing ComfyUI requirements..."
-        pip install -r .comfy-test-env/ComfyUI/requirements.txt
-
-    - name: Install uv and playwright
-      shell: bash
-      run: |
+        # Install tools needed by comfy-test
         echo "Installing uv and playwright..."
         pip install uv playwright
 
-    - name: Install Playwright browser
+        # Install Playwright browser
+        echo "Installing Playwright browser..."
+        playwright install chromium
+        playwright install-deps chromium || true
+
+    - name: Activate venv (cache hit)
+      if: steps.env-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        echo "Cache hit - venv ready to use"
+        # Add venv to PATH for subsequent steps
+        if [ -d ".comfy-test-env/venv/bin" ]; then
+          echo ".comfy-test-env/venv/bin" >> $GITHUB_PATH
+        else
+          echo ".comfy-test-env/venv/Scripts" >> $GITHUB_PATH
+        fi
+
+    - name: Add venv to PATH (cache miss)
       if: steps.env-cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        playwright install chromium
-        playwright install-deps chromium || true
+        if [ -d ".comfy-test-env/venv/bin" ]; then
+          echo ".comfy-test-env/venv/bin" >> $GITHUB_PATH
+        else
+          echo ".comfy-test-env/venv/Scripts" >> $GITHUB_PATH
+        fi
 
     - name: Save environment cache
       if: steps.env-cache.outputs.cache-hit != 'true'
@@ -87,4 +112,4 @@ runs:
           ~/.cache/ms-playwright
           ~/Library/Caches/ms-playwright
           ~/AppData/Local/ms-playwright
-        key: comfy-env-${{ runner.os }}-py${{ inputs.python-version }}-${{ inputs.platform || 'standard' }}
+        key: comfy-env-v2-${{ runner.os }}-py${{ inputs.python-version }}-${{ inputs.platform || 'standard' }}
