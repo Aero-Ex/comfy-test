@@ -616,14 +616,22 @@ jobs:
         with:
           path: artifacts
 
+      - name: Checkout existing gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+        continue-on-error: true
+
       - name: Prepare gh-pages structure
         run: |
           mkdir -p gh-pages
 
-          # Move each result set to its subdirectory
+          # For each job that ran, clean its folder and copy fresh results
           for dir in artifacts/results-*; do
             if [ -d "$dir" ]; then
               name=$(basename "$dir" | sed 's/results-//')
+              rm -rf "gh-pages/$name"
               mkdir -p "gh-pages/$name"
               cp -r "$dir"/* "gh-pages/$name/" 2>/dev/null || true
             fi
@@ -641,4 +649,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: gh-pages
-          keep_files: true
+          keep_files: false
