@@ -58,12 +58,16 @@ runs:
           git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git .comfy-test-env/ComfyUI
         fi
 
-    - name: Install pip packages
+    - name: Install ComfyUI requirements
       if: inputs.platform != 'windows-portable'
       shell: bash
       run: |
         echo "Installing ComfyUI requirements..."
         pip install -r .comfy-test-env/ComfyUI/requirements.txt
+
+    - name: Install uv and playwright
+      shell: bash
+      run: |
         echo "Installing uv and playwright..."
         pip install uv playwright
 
