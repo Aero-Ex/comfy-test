@@ -23,6 +23,7 @@ dependencies = [
     "requests>=2.28.0",      # ComfyUI API calls
     "websocket-client",      # ComfyUI WebSocket for workflow monitoring
     "py7zr>=0.20.0",         # Extract portable 7z archives
+    "psutil>=5.9.0",         # Resource monitoring (CPU/RAM)
 ]
 
 [project.optional-dependencies]

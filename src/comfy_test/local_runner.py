@@ -880,6 +880,7 @@ def run_local(
             "--container-options", " ".join(container_opts),
             "--env", "PYTHONUNBUFFERED=1",
             "--env", f"RUNNER_TOOL_CACHE={toolcache_path}",
+            "--env", "COMFY_ENV_DEBUG=1",
         ])
         if gpu:
             cmd.extend(["--env", "COMFY_TEST_GPU=1"])

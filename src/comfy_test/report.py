@@ -688,6 +688,53 @@ def _render_report(
             border-radius: 4px;
         }}
 
+        /* Resource Graph */
+        .resource-graph {{
+            display: none;
+            margin-top: 1rem;
+            background: #0f3460;
+            border-radius: 8px;
+            padding: 1rem;
+        }}
+
+        .resource-graph.active {{
+            display: block;
+        }}
+
+        .resource-graph-title {{
+            font-size: 0.9rem;
+            color: #888;
+            margin-bottom: 0.5rem;
+        }}
+
+        .resource-graph canvas {{
+            width: 100%;
+            height: 120px;
+        }}
+
+        .resource-legend {{
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+        }}
+
+        .resource-legend span {{
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }}
+
+        .resource-legend .dot {{
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }}
+
+        .resource-legend .cpu {{ background: #4da6ff; }}
+        .resource-legend .ram {{ background: #22c55e; }}
+        .resource-legend .gpu {{ background: #f97316; }}
+
         /* Video Player */
         .video-player {{
             display: none;
@@ -850,6 +897,15 @@ def _render_report(
                     <span class="video-frame-counter" id="video-frame-counter">0.0s / 0.0s</span>
                 </div>
             </div>
+            <div class="resource-graph" id="resource-graph">
+                <div class="resource-graph-title">Resource Usage</div>
+                <canvas id="resource-canvas"></canvas>
+                <div class="resource-legend">
+                    <span><span class="dot cpu"></span> CPU</span>
+                    <span><span class="dot ram"></span> RAM</span>
+                    <span id="gpu-legend" style="display:none"><span class="dot gpu"></span> GPU</span>
+                </div>
+            </div>
             <div class="lightbox-info">
                 <div>
                     <span class="lightbox-title" id="lightbox-title"></span>
@@ -928,6 +984,9 @@ def _render_report(
             }} else {{
                 videoPlayer.classList.remove('active');
             }}
+
+            // Load resource graph
+            loadResourceGraph(title);
 
             document.getElementById('lightbox').classList.add('active');
             history.replaceState(null, '', '#' + encodeURIComponent(title));
@@ -1029,6 +1088,113 @@ def _render_report(
             }}
         }}
 
+        async function loadResourceGraph(workflowName) {{
+            const graphContainer = document.getElementById('resource-graph');
+            const canvas = document.getElementById('resource-canvas');
+            const gpuLegend = document.getElementById('gpu-legend');
+
+            // Try to fetch the CSV
+            try {{
+                const response = await fetch('hardware_logs/' + workflowName + '.csv');
+                if (!response.ok) {{
+                    graphContainer.classList.remove('active');
+                    return;
+                }}
+                const text = await response.text();
+                const lines = text.trim().split('\\n').slice(1); // Skip header
+
+                if (lines.length < 2) {{
+                    graphContainer.classList.remove('active');
+                    return;
+                }}
+
+                // Parse CSV
+                const data = lines.map(line => {{
+                    const [t, cpu, ram, gpu] = line.split(',');
+                    return {{
+                        t: parseFloat(t),
+                        cpu: parseFloat(cpu),
+                        ram: parseFloat(ram),
+                        gpu: gpu ? parseFloat(gpu) : null
+                    }};
+                }});
+
+                // Check if we have GPU data
+                const hasGpu = data.some(d => d.gpu !== null);
+                gpuLegend.style.display = hasGpu ? 'flex' : 'none';
+
+                // Draw the graph
+                const ctx = canvas.getContext('2d');
+                const dpr = window.devicePixelRatio || 1;
+                const rect = canvas.getBoundingClientRect();
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+                ctx.scale(dpr, dpr);
+
+                const w = rect.width;
+                const h = rect.height;
+                const padding = {{ top: 10, right: 10, bottom: 20, left: 35 }};
+                const graphW = w - padding.left - padding.right;
+                const graphH = h - padding.top - padding.bottom;
+
+                ctx.clearRect(0, 0, w, h);
+
+                // Draw axes
+                ctx.strokeStyle = '#333';
+                ctx.beginPath();
+                ctx.moveTo(padding.left, padding.top);
+                ctx.lineTo(padding.left, h - padding.bottom);
+                ctx.lineTo(w - padding.right, h - padding.bottom);
+                ctx.stroke();
+
+                // Y-axis labels (0%, 50%, 100%)
+                ctx.fillStyle = '#666';
+                ctx.font = '10px sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText('100%', padding.left - 5, padding.top + 4);
+                ctx.fillText('50%', padding.left - 5, padding.top + graphH / 2 + 4);
+                ctx.fillText('0%', padding.left - 5, h - padding.bottom + 4);
+
+                // X-axis labels (time)
+                const maxTime = data[data.length - 1].t;
+                ctx.textAlign = 'center';
+                ctx.fillText('0s', padding.left, h - padding.bottom + 15);
+                ctx.fillText(maxTime.toFixed(0) + 's', w - padding.right, h - padding.bottom + 15);
+
+                // Draw lines
+                function drawLine(values, color) {{
+                    if (values.every(v => v === null)) return;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    let started = false;
+                    data.forEach((d, i) => {{
+                        const val = values[i];
+                        if (val === null) return;
+                        const x = padding.left + (d.t / maxTime) * graphW;
+                        const y = padding.top + (1 - val / 100) * graphH;
+                        if (!started) {{
+                            ctx.moveTo(x, y);
+                            started = true;
+                        }} else {{
+                            ctx.lineTo(x, y);
+                        }}
+                    }});
+                    ctx.stroke();
+                }}
+
+                drawLine(data.map(d => d.cpu), '#4da6ff');  // CPU - blue
+                drawLine(data.map(d => d.ram), '#22c55e');  // RAM - green
+                if (hasGpu) {{
+                    drawLine(data.map(d => d.gpu), '#f97316');  // GPU - orange
+                }}
+
+                graphContainer.classList.add('active');
+            }} catch (e) {{
+                graphContainer.classList.remove('active');
+            }}
+        }}
+
         function closeLightbox() {{
             // Stop video playback
             if (playInterval) {{
@@ -1036,6 +1202,7 @@ def _render_report(
                 playInterval = null;
                 document.getElementById('video-play-btn').innerHTML = '&#9654; Play';
             }}
+            document.getElementById('resource-graph').classList.remove('active');
             document.getElementById('lightbox').classList.remove('active');
             // Clear hash
             history.replaceState(null, '', window.location.pathname);

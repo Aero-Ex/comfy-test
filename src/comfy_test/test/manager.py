@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Optional, Callable, List
 
 from .config import TestConfig, TestLevel
+from ..resource_monitor import ResourceMonitor
 
 
 class ProgressSpinner:
@@ -704,6 +705,11 @@ class TestManager:
                                 spinner = ProgressSpinner(workflow_file.name, idx, total_workflows)
                                 spinner.start()
 
+                                # Start resource monitoring
+                                is_gpu_test = os.environ.get("COMFY_TEST_GPU") == "1"
+                                resource_monitor = ResourceMonitor(interval=1.0, monitor_gpu=is_gpu_test)
+                                resource_monitor.start()
+
                                 try:
                                     if ws and videos_dir:
                                         # Execute via browser + capture video frames (always)
@@ -741,12 +747,28 @@ class TestManager:
                                     server.remove_log_listener(capture_log)
 
                                 duration = time.time() - start_time
+                                resource_metrics = resource_monitor.stop()
+
+                                # Save resource timeline to CSV
+                                if resource_metrics.get("timeline"):
+                                    hardware_logs_dir = logs_dir / "hardware_logs"
+                                    hardware_logs_dir.mkdir(exist_ok=True)
+                                    csv_path = hardware_logs_dir / f"{workflow_file.stem}.csv"
+                                    with open(csv_path, 'w') as f:
+                                        f.write("t,cpu,ram,gpu\n")
+                                        for sample in resource_metrics["timeline"]:
+                                            gpu_val = sample['gpu'] if sample['gpu'] is not None else ''
+                                            f.write(f"{sample['t']},{sample['cpu']},{sample['ram']},{gpu_val}\n")
+                                    # Remove timeline from results.json (keep only summary stats)
+                                    resource_metrics.pop("timeline", None)
+
                                 results.append({
                                     "name": workflow_file.stem,
                                     "status": status,
                                     "duration_seconds": round(duration, 2),
                                     "error": error_msg,
                                     "hardware": hardware,
+                                    "resources": resource_metrics,
                                 })
 
                                 # Save per-workflow log (copy the list since we clear it)
@@ -1430,6 +1452,11 @@ print(json.dumps(result))
                                 spinner = ProgressSpinner(workflow_file.name, idx, total_workflows)
                                 spinner.start()
 
+                                # Start resource monitoring
+                                is_gpu_test = os.environ.get("COMFY_TEST_GPU") == "1"
+                                resource_monitor = ResourceMonitor(interval=1.0, monitor_gpu=is_gpu_test)
+                                resource_monitor.start()
+
                                 try:
                                     if ws and videos_dir:
                                         # Execute via browser + capture video frames (always)
@@ -1467,12 +1494,28 @@ print(json.dumps(result))
                                     server.remove_log_listener(capture_log)
 
                                 duration = time.time() - start_time
+                                resource_metrics = resource_monitor.stop()
+
+                                # Save resource timeline to CSV
+                                if resource_metrics.get("timeline"):
+                                    hardware_logs_dir = logs_dir / "hardware_logs"
+                                    hardware_logs_dir.mkdir(exist_ok=True)
+                                    csv_path = hardware_logs_dir / f"{workflow_file.stem}.csv"
+                                    with open(csv_path, 'w') as f:
+                                        f.write("t,cpu,ram,gpu\n")
+                                        for sample in resource_metrics["timeline"]:
+                                            gpu_val = sample['gpu'] if sample['gpu'] is not None else ''
+                                            f.write(f"{sample['t']},{sample['cpu']},{sample['ram']},{gpu_val}\n")
+                                    # Remove timeline from results.json (keep only summary stats)
+                                    resource_metrics.pop("timeline", None)
+
                                 results.append({
                                     "name": workflow_file.stem,
                                     "status": status,
                                     "duration_seconds": round(duration, 2),
                                     "error": error_msg,
                                     "hardware": hardware,
+                                    "resources": resource_metrics,
                                 })
 
                                 # Save per-workflow log (copy the list since we clear it)
