@@ -203,10 +203,12 @@ class WindowsIsolation:
 
         self._log("Setting up Windows isolation...")
 
-        # Clean up any orphaned processes from previous runs
-        killed = cleanup_comfy_processes()
-        if killed:
-            self._log(f"  Cleaned up {killed} orphaned process(es)")
+        # Clean up any orphaned processes from previous runs (local only)
+        # Skip in CI - runners are fresh and the filter can accidentally match comfy-test itself
+        if not os.environ.get("CI") and not os.environ.get("GITHUB_ACTIONS"):
+            killed = cleanup_comfy_processes()
+            if killed:
+                self._log(f"  Cleaned up {killed} orphaned process(es)")
 
         # Save environment
         self._saved_env = os.environ.copy()
