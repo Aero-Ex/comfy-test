@@ -118,13 +118,13 @@ jobs:
           python-version: ${{ needs.parse-config.outputs.python-version }}
 
       # Install comfy-test (not cached, always fresh from repo)
-      # Use pip since venv is in PATH; uv can't auto-detect venv at ~/venv
+      # Use pip since venv is in PATH; uv can't auto-detect venv at $HOME/venv
       - name: Install comfy-test
         run: pip install "./.comfy-test-src[screenshot]"
 
       # Run tests using cached ComfyUI
       - name: Run tests
-        run: comfy-test run --platform linux --comfyui-dir ~/venv/ComfyUI -c ${{ inputs.config-file }}
+        run: comfy-test run --platform linux --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
 
       # Upload test results (screenshots, logs, etc.)
       - name: Upload results
@@ -168,7 +168,7 @@ jobs:
         run: pip install "./.comfy-test-src[screenshot]"
 
       - name: Run tests
-        run: comfy-test run --platform macos --comfyui-dir ~/venv/ComfyUI -c ${{ inputs.config-file }}
+        run: comfy-test run --platform macos --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
 
       - name: Upload results
         if: always()
@@ -211,7 +211,7 @@ jobs:
         run: pip install "./.comfy-test-src[screenshot]"
 
       - name: Run tests
-        run: comfy-test run --platform windows --comfyui-dir ~/venv/ComfyUI -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
 
       - name: Upload results
         if: always()
@@ -255,7 +255,7 @@ jobs:
         run: pip install "./.comfy-test-src[screenshot]"
 
       - name: Run tests
-        run: comfy-test run --platform windows-portable --comfyui-dir ~/venv/ComfyUI_windows_portable/ComfyUI -c ${{ inputs.config-file }}
+        run: comfy-test run --platform windows-portable --comfyui-dir $HOME/venv/ComfyUI_windows_portable/ComfyUI -c ${{ inputs.config-file }}
 
       - name: Upload results
         if: always()
@@ -292,7 +292,7 @@ jobs:
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
       - run: pip install "./.comfy-test-src[screenshot]"
-      - run: comfy-test run --platform linux --comfyui-dir ~/venv/ComfyUI -c ${{ inputs.config-file }}
+      - run: comfy-test run --platform linux --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -323,7 +323,7 @@ jobs:
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
       - run: pip install "./.comfy-test-src[screenshot]"
-      - run: comfy-test run --platform windows --comfyui-dir ~/venv/ComfyUI -c ${{ inputs.config-file }}
+      - run: comfy-test run --platform windows --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -355,7 +355,7 @@ jobs:
           python-version: ${{ needs.parse-config.outputs.python-version }}
           platform: windows-portable
       - run: pip install "./.comfy-test-src[screenshot]"
-      - run: comfy-test run --platform windows-portable --comfyui-dir ~/venv/ComfyUI_windows_portable/ComfyUI -c ${{ inputs.config-file }}
+      - run: comfy-test run --platform windows-portable --comfyui-dir $HOME/venv/ComfyUI_windows_portable/ComfyUI -c ${{ inputs.config-file }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -386,7 +386,7 @@ jobs:
         with:
           python-version: ${{ needs.parse-config.outputs.python-version }}
       - run: pip install "./.comfy-test-src[screenshot]"
-      - run: comfy-test run --platform macos --comfyui-dir ~/venv/ComfyUI -c ${{ inputs.config-file }}
+      - run: comfy-test run --platform macos --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
