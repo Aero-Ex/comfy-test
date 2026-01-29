@@ -229,6 +229,8 @@ class WorkflowScreenshot:
             viewport={"width": self.width, "height": self.height},
             device_scale_factor=2,  # HiDPI for crisp screenshots
         )
+        # Increase default timeout for CI environments (macOS can be slow)
+        self._page.set_default_timeout(60000)
         # Capture browser console messages
         self._page.on("console", self._handle_console)
 
@@ -248,6 +250,26 @@ class WorkflowScreenshot:
     def clear_console_logs(self) -> None:
         """Clear captured console logs."""
         self._console_logs.clear()
+
+    def _screenshot_with_retry(self, path: str, retries: int = 3, **kwargs) -> None:
+        """Take screenshot with retry logic for flaky CI environments.
+
+        Args:
+            path: Path to save screenshot
+            retries: Number of retry attempts (default 3)
+            **kwargs: Additional arguments passed to page.screenshot()
+        """
+        last_error = None
+        for attempt in range(retries):
+            try:
+                self._page.screenshot(path=path, **kwargs)
+                return
+            except Exception as e:
+                last_error = e
+                if attempt < retries - 1:
+                    self._log(f"  Screenshot attempt {attempt + 1} failed, retrying...")
+                    self._page.wait_for_timeout(1000)  # Wait before retry
+        raise last_error
 
     def stop(self) -> None:
         """Stop the headless browser."""
@@ -492,7 +514,7 @@ class WorkflowScreenshot:
 
         try:
             # Full viewport screenshot (1920x1080 at 2x scale)
-            self._page.screenshot(path=str(tmp_path))
+            self._screenshot_with_retry(path=str(tmp_path))
 
             # Embed workflow metadata into PNG
             self._embed_workflow(tmp_path, output_path, workflow)
@@ -643,7 +665,7 @@ class WorkflowScreenshot:
 
         try:
             # Full viewport screenshot (1920x1080 at 2x scale)
-            self._page.screenshot(path=str(tmp_path))
+            self._screenshot_with_retry(path=str(tmp_path))
 
             # Embed workflow metadata into PNG
             self._embed_workflow(tmp_path, output_path, workflow)
@@ -1161,7 +1183,7 @@ class WorkflowScreenshot:
 
                 try:
                     # Full viewport screenshot at HiDPI (2x scale for crisp image)
-                    self._page.screenshot(path=str(tmp_path))
+                    self._screenshot_with_retry(path=str(tmp_path))
 
                     # Embed workflow metadata into PNG
                     self._embed_workflow(tmp_path, final_screenshot_path, workflow)

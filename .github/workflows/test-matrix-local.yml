@@ -118,6 +118,9 @@ jobs:
           if ls .wheels/comfy_3d_viewers-*.whl 1>/dev/null 2>&1; then
             echo "Installing comfy-3d-viewers from pre-built wheel"
             pip install --force-reinstall .wheels/comfy_3d_viewers-*.whl
+          elif [ -d ".local-comfy-3d-viewers" ]; then
+            echo "Installing comfy-3d-viewers from local copy"
+            pip install --force-reinstall .local-comfy-3d-viewers
           fi
 
       - name: Syntax

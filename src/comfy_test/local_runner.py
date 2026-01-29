@@ -818,31 +818,19 @@ def run_local(
             # Update job_name to match the modified workflow
             job_name = f"{job_name}-{short_id}"
 
-        # Pre-build wheels on host (avoids hatchling issues in Docker)
-        wheel_dir = work_dir / ".wheels"
-        wheel_dir.mkdir(exist_ok=True)
-
+        # Copy local packages directly (simpler than building wheels)
         if local_comfy_test.exists():
-            log(f"Building comfy-test wheel...")
-            subprocess.run(
-                ["pip", "wheel", str(local_comfy_test) + "[screenshot]", "--no-deps", "--no-cache-dir", "-w", str(wheel_dir)],
-                check=True
-            )
+            log(f"Copying local comfy-test...")
+            shutil.copytree(local_comfy_test, work_dir / ".local-comfy-test")
 
         if local_comfy_env.exists():
-            log(f"Building comfy-env wheel...")
-            subprocess.run(
-                ["pip", "wheel", str(local_comfy_env), "--no-deps", "--no-cache-dir", "-w", str(wheel_dir)],
-                check=True
-            )
+            log(f"Copying local comfy-env...")
+            shutil.copytree(local_comfy_env, work_dir / ".local-comfy-env")
 
         local_comfy_3d_viewers = Path.home() / "utils" / "comfy-3d-viewers"
         if local_comfy_3d_viewers.exists():
-            log(f"Building comfy-3d-viewers wheel...")
-            subprocess.run(
-                ["pip", "wheel", str(local_comfy_3d_viewers), "--no-deps", "--no-cache-dir", "-w", str(wheel_dir)],
-                capture_output=True, check=True
-            )
+            log(f"Copying local comfy-3d-viewers...")
+            shutil.copytree(local_comfy_3d_viewers, work_dir / ".local-comfy-3d-viewers")
 
         # Build container options - mount output dir
         playwright_cache = Path.home() / ".cache" / "ms-playwright"

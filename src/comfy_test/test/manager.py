@@ -406,7 +406,8 @@ class TestManager:
             platform_config = self.config.get_platform_config(platform_name)
 
             # Create temporary work directory
-            with tempfile.TemporaryDirectory(prefix="comfy_test_") as work_dir:
+            # ignore_cleanup_errors=True prevents WinError 32 when worker processes still have files open
+            with tempfile.TemporaryDirectory(prefix="comfy_test_", ignore_cleanup_errors=True) as work_dir:
                 work_path = Path(work_dir)
 
                 # Enable isolation for Windows platforms (no Docker available)
