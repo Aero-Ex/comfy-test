@@ -254,10 +254,12 @@ class WindowsIsolation:
                 pass
         self._dll_handles.clear()
 
-        # Clean up orphaned processes
-        killed = cleanup_comfy_processes()
-        if killed:
-            self._log(f"  Cleaned up {killed} orphaned process(es)")
+        # Clean up orphaned processes (local only)
+        # Skip in CI - runners are fresh and the filter can accidentally match comfy-test itself
+        if not os.environ.get("CI") and not os.environ.get("GITHUB_ACTIONS"):
+            killed = cleanup_comfy_processes()
+            if killed:
+                self._log(f"  Cleaned up {killed} orphaned process(es)")
 
         # Clean up temp files
         cleanup_temp_files(self.work_dir)
