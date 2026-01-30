@@ -393,7 +393,7 @@ class WorkflowScreenshot:
 
         # Load workflow JSON
         try:
-            with open(workflow_path) as f:
+            with open(workflow_path, encoding='utf-8-sig') as f:
                 workflow = json.load(f)
         except Exception as e:
             raise ScreenshotError(f"Failed to load workflow: {workflow_path}", str(e))
@@ -462,7 +462,7 @@ class WorkflowScreenshot:
 
         # Load workflow JSON
         try:
-            with open(workflow_path) as f:
+            with open(workflow_path, encoding='utf-8-sig') as f:
                 workflow = json.load(f)
         except Exception as e:
             raise ScreenshotError(f"Failed to load workflow: {workflow_path}", str(e))
@@ -561,7 +561,7 @@ class WorkflowScreenshot:
 
         # Load workflow JSON
         try:
-            with open(workflow_path) as f:
+            with open(workflow_path, encoding='utf-8-sig') as f:
                 workflow = json.load(f)
         except Exception as e:
             raise ScreenshotError(f"Failed to load workflow: {workflow_path}", str(e))
@@ -745,7 +745,7 @@ class WorkflowScreenshot:
 
         # Load workflow JSON
         try:
-            with open(workflow_path) as f:
+            with open(workflow_path, encoding='utf-8-sig') as f:
                 workflow = json.load(f)
         except Exception as e:
             raise ScreenshotError(f"Failed to load workflow: {workflow_path}", str(e))
@@ -968,7 +968,7 @@ class WorkflowScreenshot:
 
         # Load workflow JSON
         try:
-            with open(workflow_path) as f:
+            with open(workflow_path, encoding='utf-8-sig') as f:
                 workflow = json.load(f)
         except Exception as e:
             raise ScreenshotError(f"Failed to load workflow: {workflow_path}", str(e))
