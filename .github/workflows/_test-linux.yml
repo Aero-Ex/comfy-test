@@ -45,6 +45,7 @@ jobs:
             ${{ env.TOOLS_VENV }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
+            ${{ env.pythonLocation }}
           key: setup-${{ runner.os }}
 
       # --- Setup (skip if cached) ---
@@ -68,6 +69,7 @@ jobs:
             ${{ env.TOOLS_VENV }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
+            ${{ env.pythonLocation }}
           key: setup-${{ runner.os }}
 
       # --- Install comfy-test (fresh) ---
