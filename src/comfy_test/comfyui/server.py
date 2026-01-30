@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Optional, Callable, List, TYPE_CHECKING
 
 from .api import ComfyUIAPI
-from ..errors import ServerError, TestTimeoutError
+from ..common.errors import ServerError, TestTimeoutError
 
 if TYPE_CHECKING:
-    from ..test.platform.base import TestPaths, TestPlatform
-    from ..test.config import TestConfig
+    from ..common.base_platform import TestPaths, TestPlatform
+    from ..common.config import TestConfig
 
 
 class ComfyUIServer:

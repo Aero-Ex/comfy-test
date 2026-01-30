@@ -22,11 +22,11 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
-from .errors import TestError, WorkflowError
+from ..common.errors import TestError, WorkflowError
 
 if TYPE_CHECKING:
-    from .test.platform.base import TestPaths, TestPlatform
-    from .test.config import TestConfig
+    from ..common.base_platform import TestPaths, TestPlatform
+    from ..common.config import TestConfig
 
 
 class ScreenshotError(TestError):

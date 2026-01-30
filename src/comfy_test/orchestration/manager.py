@@ -7,13 +7,20 @@ import sys
 import tempfile
 import threading
 import time
-from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Callable, List
 
-from .config import TestConfig, TestLevel
-from ..resource_monitor import ResourceMonitor
+from ..common.config import TestConfig, TestLevel
+from ..common.base_platform import TestPaths
+from ..common.resource_monitor import ResourceMonitor
+from ..common.comfy_env import get_cuda_packages, get_env_vars, get_node_reqs
+from ..common.errors import (
+    TestError, WorkflowExecutionError, WorkflowError, TestTimeoutError
+)
+from .results import (
+    TestResult, has_gpu, get_hardware_info, get_workflow_timeout
+)
 
 
 class ProgressSpinner:
@@ -51,132 +58,25 @@ class ProgressSpinner:
         elapsed = int(time.time() - self.start_time)
         mins, secs = divmod(elapsed, 60)
         print(f"[{mins:02d}:{secs:02d}] {self.workflow_name} [{self.current}/{self.total}] - {status}")
-from .comfy_env import get_cuda_packages, get_env_vars, get_node_reqs
-from .platform import get_platform, TestPlatform, TestPaths
-from .platform.isolation import WindowsIsolation
-from ..comfyui.server import ComfyUIServer
-from ..comfyui.validator import WorkflowValidator
-from ..comfyui.workflow import WorkflowRunner
-from ..errors import TestError, VerificationError, WorkflowValidationError, WorkflowExecutionError, WorkflowError, TestTimeoutError
-from ..screenshot import ScreenshotError
 
 
-def _get_workflow_timeout(config_timeout: int) -> int:
-    """Get workflow timeout, using very long timeout for GPU mode."""
-    if os.environ.get("COMFY_TEST_GPU"):
-        # GPU mode: use 24 hours (effectively no timeout)
-        return 86400
-    return config_timeout
-
-
-def get_hardware_info() -> dict:
-    """Get current hardware information for results tracking."""
-    import platform
-    import subprocess
-
-    info = {
-        "os": platform.platform(),
-        "cpu": platform.processor() or "Unknown",
-    }
-
-    # Get better CPU info on Linux
-    try:
-        with open("/proc/cpuinfo") as f:
-            for line in f:
-                if line.startswith("model name"):
-                    info["cpu"] = line.split(":")[1].strip()
-                    break
-    except (FileNotFoundError, PermissionError):
-        pass
-
-    # Get GPU info
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            info["gpu"] = result.stdout.strip().split("\n")[0]
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
-
-    return info
-
-
-@dataclass
-class TestState:
-    """State persisted between CLI invocations for multi-step CI.
-
-    This allows running test levels in separate CI steps while sharing
-    the ComfyUI environment setup between them.
-    """
-    comfyui_dir: str
-    python: str
-    custom_nodes_dir: str
-    cuda_packages: List[str]
-    platform_name: str
-
-
-def save_state(state: TestState, work_dir: Path) -> None:
-    """Save test state to work directory for later resumption."""
-    state_file = work_dir / "state.json"
-    work_dir.mkdir(parents=True, exist_ok=True)
-    with open(state_file, "w") as f:
-        json.dump(asdict(state), f, indent=2)
-
-
-def load_state(work_dir: Path) -> TestState:
-    """Load test state from work directory."""
-    state_file = work_dir / "state.json"
-    if not state_file.exists():
-        raise TestError(
-            "No state file found",
-            f"Expected {state_file}. Run install level first with --work-dir."
-        )
-    with open(state_file) as f:
-        data = json.load(f)
-    return TestState(**data)
-
-
-class TestResult:
-    """Result of a test run.
-
-    Attributes:
-        platform: Platform name
-        success: Whether the test passed
-        error: Error message if failed
-        details: Additional details
-    """
-
-    def __init__(
-        self,
-        platform: str,
-        success: bool,
-        error: Optional[str] = None,
-        details: Optional[str] = None,
-    ):
-        self.platform = platform
-        self.success = success
-        self.error = error
-        self.details = details
-
-    def __repr__(self) -> str:
-        status = "PASS" if self.success else "FAIL"
-        return f"TestResult({self.platform}: {status})"
-
-
-def has_gpu() -> bool:
-    """Check if a GPU is available for CUDA operations.
-
-    Returns:
-        True if nvidia-smi succeeds (GPU available), False otherwise
-    """
-    import subprocess
-    try:
-        result = subprocess.run(["nvidia-smi"], capture_output=True, timeout=10)
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+# Platform imports - use the new structure
+def get_platform(platform_name: str, log_callback=None):
+    """Get platform instance by name."""
+    if platform_name == "linux":
+        from ..platforms.linux.platform import LinuxPlatform
+        return LinuxPlatform(log_callback)
+    elif platform_name == "windows":
+        from ..platforms.windows.platform import WindowsPlatform
+        return WindowsPlatform(log_callback)
+    elif platform_name == "windows_portable":
+        from ..platforms.windows_portable.platform import WindowsPortablePlatform
+        return WindowsPortablePlatform(log_callback)
+    elif platform_name == "macos":
+        from ..platforms.macos.platform import MacOSPlatform
+        return MacOSPlatform(log_callback)
+    else:
+        raise TestError(f"Unknown platform: {platform_name}")
 
 
 class TestManager:
@@ -277,6 +177,7 @@ class TestManager:
         level: Optional[TestLevel] = None,
         workflow_filter: Optional[str] = None,
         comfyui_dir: Optional[Path] = None,
+        skip_setup: bool = False,
     ) -> List[TestResult]:
         """Run tests on all enabled platforms.
 
@@ -284,7 +185,8 @@ class TestManager:
             dry_run: If True, only show what would be done
             level: Maximum test level to run (None = all levels + workflows)
             workflow_filter: If specified, only run this workflow
-            comfyui_dir: Use existing ComfyUI directory (skip clone + requirements install)
+            comfyui_dir: Use existing ComfyUI directory
+            skip_setup: If True, skip node installation (assumes node is already installed)
 
         Returns:
             List of TestResult for each platform
@@ -303,7 +205,10 @@ class TestManager:
                 self._log(f"Skipping {platform_name} (disabled)")
                 continue
 
-            result = self.run_platform(platform_name, dry_run, level, workflow_filter, comfyui_dir=comfyui_dir)
+            result = self.run_platform(
+                platform_name, dry_run, level, workflow_filter,
+                comfyui_dir=comfyui_dir, skip_setup=skip_setup
+            )
             results.append(result)
 
         return results
@@ -315,6 +220,7 @@ class TestManager:
         level: Optional[TestLevel] = None,
         workflow_filter: Optional[str] = None,
         comfyui_dir: Optional[Path] = None,
+        skip_setup: bool = False,
     ) -> TestResult:
         """Run tests on a specific platform.
 
@@ -323,11 +229,18 @@ class TestManager:
             dry_run: If True, only show what would be done
             level: Maximum test level to run (CLI override, None = use config levels)
             workflow_filter: If specified, only run this workflow (e.g., 'fix_normals.json')
-            comfyui_dir: Use existing ComfyUI directory (skip clone + requirements install)
+            comfyui_dir: Use existing ComfyUI directory
+            skip_setup: If True, skip node installation (assumes node is already installed)
 
         Returns:
             TestResult for the platform
         """
+        # Import here to avoid circular imports
+        from ..comfyui.server import ComfyUIServer
+        from ..comfyui.workflow import WorkflowRunner
+        from ..platforms.windows.isolation import WindowsIsolation
+        from ..reporting.screenshot import ScreenshotError
+
         # Normalize platform name (windows-portable -> windows_portable)
         platform_name = platform_name.lower().replace("-", "_")
 
@@ -420,17 +333,21 @@ class TestManager:
                 # Always run install if any later level needs it
                 self._log_level_start(TestLevel.INSTALL, TestLevel.INSTALL in requested_levels)
 
-                if comfyui_dir:
-                    # Use existing ComfyUI directory (skip clone + requirements)
+                if skip_setup:
+                    # Skip setup: use existing ComfyUI with node already installed
+                    if not comfyui_dir:
+                        raise TestError(
+                            "comfyui_dir required when skip_setup=True",
+                            "Use auto-detect or provide --comfyui-dir"
+                        )
                     self._log(f"Using existing ComfyUI: {comfyui_dir}")
-                    import sys
+                    self._log("Node already installed, skipping installation")
                     comfyui_path = Path(comfyui_dir).resolve()
 
                     # For portable, find embedded Python
                     if platform_name == "windows_portable":
                         python_embeded = comfyui_path.parent / "python_embeded"
                         if not python_embeded.exists():
-                            # Try ComfyUI_windows_portable structure
                             python_embeded = comfyui_path.parent.parent / "python_embeded"
                         python_exe = python_embeded / "python.exe"
                     else:
@@ -442,21 +359,51 @@ class TestManager:
                         python=python_exe,
                         custom_nodes_dir=comfyui_path / "custom_nodes",
                     )
+                elif comfyui_dir:
+                    # Use existing ComfyUI but still install node
+                    self._log(f"Using existing ComfyUI: {comfyui_dir}")
+                    comfyui_path = Path(comfyui_dir).resolve()
+
+                    if platform_name == "windows_portable":
+                        python_embeded = comfyui_path.parent / "python_embeded"
+                        if not python_embeded.exists():
+                            python_embeded = comfyui_path.parent.parent / "python_embeded"
+                        python_exe = python_embeded / "python.exe"
+                    else:
+                        python_exe = Path(sys.executable)
+
+                    paths = TestPaths(
+                        work_dir=work_path,
+                        comfyui_dir=comfyui_path,
+                        python=python_exe,
+                        custom_nodes_dir=comfyui_path / "custom_nodes",
+                    )
+
+                    self._log("Installing custom node...")
+                    platform.install_node(paths, self.node_dir)
+
+                    node_reqs = get_node_reqs(self.node_dir)
+                    if node_reqs:
+                        self._log(f"Installing {len(node_reqs)} node dependency(ies)...")
+                        for name, repo in node_reqs:
+                            self._log(f"  {name} from {repo}")
+                            platform.install_node_from_repo(paths, repo, name)
                 else:
+                    # Full setup: clone ComfyUI and install node
                     self._log("Setting up ComfyUI...")
                     paths = platform.setup_comfyui(self.config, work_path)
 
-                self._log("Installing custom node...")
-                platform.install_node(paths, self.node_dir)
+                    self._log("Installing custom node...")
+                    platform.install_node(paths, self.node_dir)
 
-                node_reqs = get_node_reqs(self.node_dir)
-                if node_reqs:
-                    self._log(f"Installing {len(node_reqs)} node dependency(ies)...")
-                    for name, repo in node_reqs:
-                        self._log(f"  {name} from {repo}")
-                        platform.install_node_from_repo(paths, repo, name)
+                    node_reqs = get_node_reqs(self.node_dir)
+                    if node_reqs:
+                        self._log(f"Installing {len(node_reqs)} node dependency(ies)...")
+                        for name, repo in node_reqs:
+                            self._log(f"  {name} from {repo}")
+                            platform.install_node_from_repo(paths, repo, name)
 
-                # Install comfy-test's validation endpoint for pre-execution validation
+                # Install comfy-test's validation endpoint (always needed for VALIDATION level)
                 self._log("Installing validation endpoint...")
                 platform.install_node_from_repo(
                     paths,
@@ -548,7 +495,7 @@ class TestManager:
                         self._log(f"Capturing {total_screenshots} static screenshot(s)...")
 
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
+                            from ..reporting.screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
                             # Auto-install playwright if missing
                             if not ensure_dependencies(log_callback=self._log):
                                 raise ImportError("Failed to install screenshot dependencies")
@@ -585,7 +532,7 @@ class TestManager:
                         self._log(f"Validating {total_workflows} workflow(s)...")
 
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
+                            from ..reporting.screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
                             # Auto-install playwright if missing
                             if not ensure_dependencies(log_callback=self._log):
                                 raise ImportError("Failed to install screenshot dependencies")
@@ -654,7 +601,7 @@ class TestManager:
                         screenshots_dir = None
                         videos_dir = None
                         try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
+                            from ..reporting.screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
                             # Auto-install playwright if missing
                             if not ensure_dependencies(log_callback=self._log):
                                 raise ImportError("Failed to install screenshot dependencies")
@@ -732,7 +679,7 @@ class TestManager:
                                         # Execute via API only (fallback if no playwright)
                                         result = runner.run_workflow(
                                             workflow_file,
-                                            timeout=_get_workflow_timeout(self.config.workflow.timeout),
+                                            timeout=get_workflow_timeout(self.config.workflow.timeout),
                                         )
                                         capture_log(f"    Status: {result.status}")
                                 except (WorkflowError, TestTimeoutError, ScreenshotError) as e:
@@ -806,7 +753,7 @@ class TestManager:
                         self._log(f"Results saved to {results_file}")
 
                         # Generate HTML report
-                        from ..report import generate_html_report
+                        from ..reporting.html_report import generate_html_report
                         html_file = generate_html_report(self._get_output_base(), self.node_dir.name)
                         self._log(f"Saved: {html_file}")
 
@@ -1149,446 +1096,3 @@ print(json.dumps(result))
                 for item in sorted(workflows_dir.iterdir()):
                     self._log(f"  [DEBUG]     {item.name}")
         return workflow_path
-
-    def run_single_level(
-        self,
-        platform_name: str,
-        level: TestLevel,
-        work_dir: Optional[Path] = None,
-        skip_setup: bool = False,
-    ) -> TestResult:
-        """Run a single test level (for multi-step CI).
-
-        This method is designed for CI workflows where each test level
-        runs as a separate step. State is persisted between steps via
-        the work_dir.
-
-        Args:
-            platform_name: Platform to test ('linux', 'macos', 'windows', 'windows_portable')
-            level: Specific level to run
-            work_dir: Persistent directory for state (required for install and later levels)
-            skip_setup: If True, load state from work_dir instead of running install
-
-        Returns:
-            TestResult for this level
-
-        Example:
-            # Step 1: Run syntax (no setup needed)
-            manager.run_single_level('linux', TestLevel.SYNTAX)
-
-            # Step 2: Run install (saves state)
-            manager.run_single_level('linux', TestLevel.INSTALL, work_dir=Path('/tmp/ct'))
-
-            # Step 3: Run registration (loads state)
-            manager.run_single_level('linux', TestLevel.REGISTRATION,
-                                     work_dir=Path('/tmp/ct'), skip_setup=True)
-        """
-        # Normalize platform name (windows-portable -> windows_portable)
-        platform_name = platform_name.lower().replace("-", "_")
-
-        # Check if level is in config
-        if level not in self.config.levels:
-            self._log(f"[{level.value.upper()}] SKIPPED (not in config)")
-            return TestResult(platform_name, True, details="Skipped - not in config")
-
-        self._log(f"\n{'='*60}")
-        self._log(f"Testing: {platform_name}")
-        self._log(f"Level: {level.value}")
-        self._log(f"{'='*60}")
-
-        # Enable isolation for Windows platforms
-        is_windows = platform_name in ("windows", "windows_portable")
-        isolation = None
-
-        try:
-            # === SYNTAX LEVEL ===
-            if level == TestLevel.SYNTAX:
-                self._log(f"\n[1/1] {level.value.upper()}")
-                self._log("-" * 40)
-                self._check_syntax()
-                self._log(f"[{level.value.upper()}] PASSED")
-                return TestResult(platform_name, True)
-
-            # === INSTALL LEVEL ===
-            if level == TestLevel.INSTALL:
-                if not work_dir:
-                    raise TestError(
-                        "work_dir required for install level",
-                        "Use --work-dir to specify a persistent directory"
-                    )
-
-                self._log(f"\n[1/1] {level.value.upper()}")
-                self._log("-" * 40)
-
-                platform = get_platform(platform_name, self._log)
-                work_dir.mkdir(parents=True, exist_ok=True)
-
-                # Set up isolation for Windows
-                if is_windows:
-                    isolation = WindowsIsolation(work_dir, self._log)
-                    isolation.setup()
-
-                self._log("Setting up ComfyUI...")
-                paths = platform.setup_comfyui(self.config, work_dir)
-
-                self._log("Installing custom node...")
-                platform.install_node(paths, self.node_dir)
-
-                node_reqs = get_node_reqs(self.node_dir)
-                if node_reqs:
-                    self._log(f"Installing {len(node_reqs)} node dependency(ies)...")
-                    for name, repo in node_reqs:
-                        self._log(f"  {name} from {repo}")
-                        platform.install_node_from_repo(paths, repo, name)
-
-                # Install comfy-test's validation endpoint for pre-execution validation
-                self._log("Installing validation endpoint...")
-                platform.install_node_from_repo(
-                    paths,
-                    "PozzettiAndrea/ComfyUI-validate-endpoint",
-                    "ComfyUI-validate-endpoint"
-                )
-
-                # Get CUDA packages for state
-                cuda_packages = get_cuda_packages(self.node_dir)
-                # Skip mocking if real GPU available (COMFY_TEST_GPU=1)
-                gpu_mode = os.environ.get("COMFY_TEST_GPU")
-                self._log(f"COMFY_TEST_GPU env var = {gpu_mode!r}")
-                if gpu_mode:
-                    self._log("GPU mode: using real CUDA (no mocking)")
-                    cuda_packages = []
-                elif cuda_packages:
-                    self._log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
-
-                # Save state for later levels
-                state = TestState(
-                    comfyui_dir=str(paths.comfyui_dir),
-                    python=str(paths.python),
-                    custom_nodes_dir=str(paths.custom_nodes_dir),
-                    cuda_packages=cuda_packages,
-                    platform_name=platform_name,
-                )
-                save_state(state, work_dir)
-                self._log(f"State saved to {work_dir / 'state.json'}")
-
-                # Teardown isolation on success
-                if isolation:
-                    isolation.teardown()
-
-                self._log(f"[{level.value.upper()}] PASSED")
-                return TestResult(platform_name, True)
-
-            # === LEVELS REQUIRING SERVER (registration, instantiation, execution) ===
-            if not work_dir:
-                raise TestError(
-                    "work_dir required",
-                    "Use --work-dir to specify the directory containing state.json"
-                )
-
-            if not skip_setup:
-                raise TestError(
-                    "skip_setup required for levels after install",
-                    "Use --skip-setup to load state from work_dir"
-                )
-
-            # Load state from previous install
-            state = load_state(work_dir)
-
-            # Skip mocking if real GPU available (COMFY_TEST_GPU=1)
-            gpu_mode = os.environ.get("COMFY_TEST_GPU")
-            self._log(f"COMFY_TEST_GPU env var = {gpu_mode!r}")
-            if gpu_mode:
-                self._log("GPU mode: using real CUDA (no mocking)")
-                state.cuda_packages = []
-
-            # Reconstruct paths from state
-            paths = TestPaths(
-                work_dir=work_dir,
-                comfyui_dir=Path(state.comfyui_dir),
-                python=Path(state.python),
-                custom_nodes_dir=Path(state.custom_nodes_dir),
-            )
-
-            platform = get_platform(platform_name, self._log)
-            platform_config = self.config.get_platform_config(platform_name)
-
-            # Set up isolation for Windows
-            if is_windows:
-                isolation = WindowsIsolation(work_dir, self._log)
-                isolation.setup()
-
-            self._log(f"\n[1/1] {level.value.upper()}")
-            self._log("-" * 40)
-
-            # Start server for this level
-            self._log("Starting ComfyUI server...")
-            with ComfyUIServer(
-                platform, paths, self.config,
-                cuda_mock_packages=state.cuda_packages,
-                log_callback=self._log,
-            ) as server:
-                api = server.get_api()
-
-                if level == TestLevel.REGISTRATION:
-                    self._log("Checking for import errors in server logs...")
-                    import_errors = server.get_import_errors()
-                    if import_errors:
-                        error_msg = "\n".join(import_errors)
-                        raise TestError(
-                            f"Node import failed ({len(import_errors)} error(s))",
-                            error_msg
-                        )
-                    self._log("No import errors detected")
-
-                elif level == TestLevel.INSTANTIATION:
-                    self._log("Testing node constructors...")
-                    object_info = api.get_object_info()
-                    registered_nodes = list(object_info.keys())
-                    self._test_instantiation(platform, paths, registered_nodes, state.cuda_packages)
-                    self._log(f"All {len(registered_nodes)} node(s) instantiated successfully!")
-
-                elif level == TestLevel.STATIC_CAPTURE:
-                    if not self.config.workflow.workflows:
-                        self._log("No workflows configured for static capture")
-                    else:
-                        total_screenshots = len(self.config.workflow.workflows)
-                        self._log(f"Capturing {total_screenshots} static screenshot(s)...")
-
-                        try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
-                            # Auto-install playwright if missing
-                            if not ensure_dependencies(log_callback=self._log):
-                                raise ImportError("Failed to install screenshot dependencies")
-                            check_dependencies()
-
-                            screenshots_dir = self._get_output_base() / "screenshots"
-                            screenshots_dir.mkdir(parents=True, exist_ok=True)
-
-                            ws = WorkflowScreenshot(server.base_url, log_callback=self._log)
-                            ws.start()
-                            try:
-                                for idx, workflow_file in enumerate(self.config.workflow.workflows, 1):
-                                    self._log(f"  [{idx}/{total_screenshots}] STATIC {workflow_file.name}")
-                                    output_path = screenshots_dir / f"{workflow_file.stem}.png"
-                                    ws.capture(self._resolve_workflow_path(workflow_file), output_path=output_path)
-                            finally:
-                                ws.stop()
-                        except ImportError:
-                            self._log("WARNING: Screenshots disabled (playwright not installed)")
-
-                elif level == TestLevel.EXECUTION:
-                    if not self.config.workflow.workflows:
-                        self._log("No workflows configured for execution")
-                    elif platform_config.skip_workflow:
-                        self._log("Skipped per platform config")
-                    else:
-                        # Check GPU availability for GPU-requiring workflows
-                        gpu_available = has_gpu()
-                        gpu_workflows = set(self.config.workflow.gpu or [])
-                        if gpu_workflows:
-                            if gpu_available:
-                                self._log("GPU detected - will execute GPU workflows")
-                            else:
-                                self._log("No GPU detected - GPU workflows will be skipped")
-
-                        total_workflows = len(self.config.workflow.workflows)
-                        self._log(f"Running {total_workflows} workflow(s) (all with videos)...")
-
-                        # Create a log capture wrapper that writes to both main log and current workflow log
-                        current_workflow_log = []
-
-                        def capture_log(msg):
-                            # Don't call self._log here - server._log_all already does
-                            current_workflow_log.append(msg)
-
-                        # Always initialize browser for screenshots/videos
-                        ws = None
-                        screenshots_dir = None
-                        videos_dir = None
-                        try:
-                            from ..screenshot import WorkflowScreenshot, check_dependencies, ensure_dependencies
-                            # Auto-install playwright if missing
-                            if not ensure_dependencies(log_callback=self._log):
-                                raise ImportError("Failed to install screenshot dependencies")
-                            check_dependencies()
-                            ws = WorkflowScreenshot(server.base_url, log_callback=capture_log)
-                            ws.start()
-                            # Create screenshots and videos output directories
-                            screenshots_dir = self._get_output_base() / "screenshots"
-                            screenshots_dir.mkdir(parents=True, exist_ok=True)
-                            videos_dir = self._get_output_base() / "videos"
-                            videos_dir.mkdir(parents=True, exist_ok=True)
-                        except ImportError:
-                            self._log("WARNING: Screenshots disabled (playwright not installed)")
-
-                        # Initialize results tracking
-                        results = []
-                        logs_dir = self._get_output_base() / "logs"
-                        logs_dir.mkdir(parents=True, exist_ok=True)
-
-                        # Get hardware info once for all workflows that run on this machine
-                        hardware = get_hardware_info()
-
-                        try:
-                            runner = WorkflowRunner(api, capture_log)
-                            all_errors = []
-                            for idx, workflow_file in enumerate(self.config.workflow.workflows, 1):
-                                # Clear execution cache before each workflow to prevent state accumulation
-                                api.free_memory(unload_models=False)
-
-                                # Reset workflow log for this workflow
-                                current_workflow_log.clear()
-                                # Register capture_log to receive [ComfyUI] output
-                                server.add_log_listener(capture_log)
-                                start_time = time.time()
-                                status = "pass"
-                                error_msg = None
-
-                                # Check if this is a GPU workflow and we don't have GPU
-                                is_gpu_workflow = workflow_file in gpu_workflows
-                                if is_gpu_workflow and not gpu_available:
-                                    self._log(f"  [{idx}/{total_workflows}] SKIPPED (GPU required) {workflow_file.name}")
-                                    results.append({
-                                        "name": workflow_file.stem,
-                                        "status": "skipped",
-                                        "duration_seconds": 0,
-                                        "error": "GPU required but not available",
-                                        "hardware": None,
-                                    })
-                                    continue
-
-                                # Start progress spinner
-                                spinner = ProgressSpinner(workflow_file.name, idx, total_workflows)
-                                spinner.start()
-
-                                # Start resource monitoring
-                                is_gpu_test = os.environ.get("COMFY_TEST_GPU") == "1"
-                                resource_monitor = ResourceMonitor(interval=1.0, monitor_gpu=is_gpu_test)
-                                resource_monitor.start()
-
-                                try:
-                                    if ws and videos_dir:
-                                        # Execute via browser + capture video frames (always)
-                                        workflow_video_dir = videos_dir / workflow_file.stem
-                                        final_screenshot_path = screenshots_dir / f"{workflow_file.stem}_executed.png"
-                                        frames = ws.capture_execution_frames(
-                                            self._resolve_workflow_path(workflow_file),
-                                            output_dir=workflow_video_dir,
-                                            log_lines=current_workflow_log,
-                                            webp_quality=60,  # Low quality for video frames
-                                            final_screenshot_path=final_screenshot_path,  # High quality PNG
-                                            final_screenshot_delay_ms=5000,  # 5 second delay
-                                        )
-                                        capture_log(f"    Captured {len(frames)} video frames")
-                                    else:
-                                        # Execute via API only (fallback if no playwright)
-                                        result = runner.run_workflow(
-                                            workflow_file,
-                                            timeout=_get_workflow_timeout(self.config.workflow.timeout),
-                                        )
-                                        capture_log(f"    Status: {result.status}")
-                                except (WorkflowError, TestTimeoutError, ScreenshotError) as e:
-                                    status = "fail"
-                                    # Include full error with details, not just message
-                                    error_msg = str(e)
-                                    capture_log(f"    Status: FAILED")
-                                    capture_log(f"    Error: {e.message}")
-                                    if e.details:
-                                        capture_log(f"    Details: {e.details}")
-                                    all_errors.append((workflow_file.name, str(e)))
-                                finally:
-                                    # Stop spinner with final status
-                                    spinner.stop("PASS" if status == "pass" else "FAIL")
-                                    # Remove listener so next workflow starts fresh
-                                    server.remove_log_listener(capture_log)
-
-                                duration = time.time() - start_time
-                                resource_metrics = resource_monitor.stop()
-
-                                # Save resource timeline to CSV (in logs/ folder which already exists)
-                                if resource_metrics.get("timeline"):
-                                    csv_path = logs_dir / f"{workflow_file.stem}_resources.csv"
-                                    cpu_count = resource_metrics.get("cpu_count", 1)
-                                    total_ram = resource_metrics.get("total_ram_gb", 16)
-                                    with open(csv_path, 'w') as f:
-                                        # Metadata in header comment for graph scaling
-                                        f.write(f"# cpu_count={cpu_count},total_ram_gb={total_ram}\n")
-                                        f.write("t,cpu_cores,ram_gb,gpu_pct\n")
-                                        for sample in resource_metrics["timeline"]:
-                                            gpu_val = sample['gpu'] if sample['gpu'] is not None else ''
-                                            f.write(f"{sample['t']},{sample['cpu']},{sample['ram']},{gpu_val}\n")
-                                    # Remove timeline from results.json (keep only summary stats)
-                                    resource_metrics.pop("timeline", None)
-
-                                results.append({
-                                    "name": workflow_file.stem,
-                                    "status": status,
-                                    "duration_seconds": round(duration, 2),
-                                    "error": error_msg,
-                                    "hardware": hardware,
-                                    "resources": resource_metrics,
-                                })
-
-                                # Save per-workflow log (copy the list since we clear it)
-                                (logs_dir / f"{workflow_file.stem}.log").write_text("\n".join(current_workflow_log), encoding="utf-8")
-                                # Save browser console logs
-                                if ws:
-                                    ws.save_console_logs(logs_dir / f"{workflow_file.stem}_console.log")
-                                    ws.clear_console_logs()
-                        finally:
-                            if ws:
-                                ws.stop()
-
-                        # Save results.json
-                        passed_count = sum(1 for r in results if r["status"] == "pass")
-                        failed_count = sum(1 for r in results if r["status"] == "fail")
-                        results_data = {
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "platform": platform_name,
-                            "hardware": hardware,
-                            "summary": {
-                                "total": len(results),
-                                "passed": passed_count,
-                                "failed": failed_count
-                            },
-                            "workflows": results
-                        }
-                        results_file = self._get_output_base() / "results.json"
-                        results_file.write_text(json.dumps(results_data, indent=2))
-                        self._log(f"Results saved to {results_file}")
-
-                        # Generate HTML report
-                        from ..report import generate_html_report
-                        html_file = generate_html_report(self._get_output_base(), self.node_dir.name)
-                        self._log(f"Saved: {html_file}")
-
-                        if all_errors:
-                            raise WorkflowExecutionError(
-                                f"Workflow execution failed ({len(all_errors)} error(s))",
-                                [f"{name}: {err}" for name, err in all_errors]
-                            )
-
-            # Teardown isolation on success
-            if isolation:
-                isolation.teardown()
-
-            self._log(f"[{level.value.upper()}] PASSED")
-            return TestResult(platform_name, True)
-
-        except TestError as e:
-            # Teardown isolation on error
-            if isolation:
-                isolation.teardown()
-            self._log(f"\n{platform_name}: FAILED")
-            self._log(f"Error: {e.message}")
-            if e.details:
-                self._log(f"Details: {e.details}")
-            return TestResult(platform_name, False, str(e.message), e.details)
-
-        except Exception as e:
-            # Teardown isolation on error
-            if isolation:
-                isolation.teardown()
-            self._log(f"\n{platform_name}: FAILED (unexpected error)")
-            self._log(f"Error: {e}")
-            return TestResult(platform_name, False, str(e))

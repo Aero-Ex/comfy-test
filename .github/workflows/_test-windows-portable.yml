@@ -1,0 +1,95 @@
+# Windows Portable test workflow - called by test-matrix.yml
+name: Test Windows Portable
+
+on:
+  workflow_call:
+    inputs:
+      config-file:
+        type: string
+        default: "comfy-test.toml"
+      timeout-minutes:
+        type: number
+        default: 60
+      gpu:
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ${{ inputs.gpu && fromJSON('["self-hosted", "windows", "gpu"]') || 'windows-latest' }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      COMFY_TEST_GPU: ${{ inputs.gpu && '1' || '' }}
+      NODE_NAME: ${{ github.event.repository.name }}
+      COMFYUI_DIR: ${{ github.workspace }}/ComfyUI_windows_portable/ComfyUI
+      TOOLS_VENV: ${{ github.workspace }}/.tools-venv
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # --- Single cache ---
+      - uses: actions/cache/restore@v4
+        id: setup-cache
+        with:
+          path: |
+            ${{ env.TOOLS_VENV }}
+            ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+            ${{ github.workspace }}/ComfyUI_windows_portable
+          key: setup-windows-portable
+
+      # --- Setup (skip if cached) ---
+      - name: Setup environment
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python -m venv $TOOLS_VENV
+          $TOOLS_VENV/Scripts/pip install uv playwright
+
+          curl -L --fail -o portable.7z \
+            "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z"
+          "/c/Program Files/7-Zip/7z.exe" x portable.7z -y
+          rm portable.7z
+
+          $TOOLS_VENV/Scripts/playwright install chromium
+
+      # --- Save cache ---
+      - uses: actions/cache/save@v4
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ env.TOOLS_VENV }}
+            ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+            ${{ github.workspace }}/ComfyUI_windows_portable
+          key: setup-windows-portable
+
+      # --- Install comfy-test (fresh) ---
+      - name: Install comfy-test
+        run: pip install comfy-test
+
+      # --- Checkout and run ---
+      - uses: actions/checkout@v4
+        with:
+          path: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ github.event.repository.name }}
+
+      - name: Install node dependencies
+        shell: bash
+        working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
+        run: |
+          PYTHON_EXE="$COMFYUI_DIR/../python_embeded/python.exe"
+          [ -f requirements.txt ] && $PYTHON_EXE -m pip install -r requirements.txt || true
+          [ -f install.py ] && $PYTHON_EXE install.py || true
+
+      - name: Run tests
+        working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
+        run: comfy-test run
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-windows-portable-${{ inputs.gpu && 'gpu' || 'cpu' }}
+          path: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}/comfy-test-results/
+          if-no-files-found: ignore
+          include-hidden-files: true

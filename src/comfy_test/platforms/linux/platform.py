@@ -7,10 +7,10 @@ import sys
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
-from .base import TestPlatform, TestPaths
+from ...common.base_platform import TestPlatform, TestPaths
 
 if TYPE_CHECKING:
-    from ..config import TestConfig
+    from ...common.config import TestConfig
 
 
 COMFYUI_REPO = "https://github.com/comfyanonymous/ComfyUI.git"
@@ -18,7 +18,7 @@ PYTORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu128"
 PYPI_INDEX = "https://pypi.org/simple"
 
 
-class LinuxTestPlatform(TestPlatform):
+class LinuxPlatform(TestPlatform):
     """Linux platform implementation for ComfyUI testing."""
 
     @property
@@ -29,10 +29,16 @@ class LinuxTestPlatform(TestPlatform):
     def executable_suffix(self) -> str:
         return ""
 
+    def is_ci(self) -> bool:
+        """Detect if running in CI environment."""
+        return os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+
+    def is_gpu_mode(self) -> bool:
+        """Detect if GPU mode is enabled."""
+        return bool(os.environ.get("COMFY_TEST_GPU"))
+
     def _pip_install_requirements(self, requirements_file: Path, cwd: Path) -> None:
         """Install requirements with proper PyTorch index for GPU/CPU mode."""
-        gpu_mode = os.environ.get("COMFY_TEST_GPU")
-
         cmd = ["uv", "pip", "install", "--system"]
 
         # Use local wheels if available (for local testing with ct test)
@@ -40,7 +46,7 @@ class LinuxTestPlatform(TestPlatform):
         if local_wheels and Path(local_wheels).exists():
             cmd.extend(["--find-links", local_wheels])
 
-        if gpu_mode:
+        if self.is_gpu_mode():
             # GPU mode: prioritize CUDA index, fallback to PyPI
             cmd.extend(["--index-url", PYTORCH_CUDA_INDEX])
             cmd.extend(["--extra-index-url", PYPI_INDEX])
@@ -151,8 +157,7 @@ class LinuxTestPlatform(TestPlatform):
         ]
 
         # Use CPU mode unless GPU mode is explicitly enabled
-        gpu_mode = os.environ.get("COMFY_TEST_GPU")
-        if not gpu_mode:
+        if not self.is_gpu_mode():
             cmd.append("--cpu")
 
         # Set environment

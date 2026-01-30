@@ -1,21 +1,8 @@
 # =============================================================================
 # ComfyUI Custom Node Test Matrix
 # =============================================================================
-# This workflow tests custom nodes across multiple platforms.
-#
-# HOW IT WORKS:
-# 1. Consumer repos (like GeometryPack) call this workflow with:
-#      uses: PozzettiAndrea/comfy-test/.github/workflows/test-matrix.yml@main
-#
-# 2. This workflow spawns parallel jobs for each platform (Linux, macOS, Windows)
-#
-# 3. Each job:
-#    - Checks out the consumer's repo (the custom node)
-#    - Checks out comfy-test (this repo)
-#    - Sets up Python + Playwright (cached)
-#    - Runs comfy-test which: clones ComfyUI, installs the node, runs tests
-#
-# 4. Results are published to the consumer repo's gh-pages branch
+# Consumer repos call this workflow:
+#   uses: PozzettiAndrea/comfy-test/.github/workflows/test-matrix.yml@main
 # =============================================================================
 
 name: ComfyUI Installation Test Matrix
@@ -23,18 +10,10 @@ name: ComfyUI Installation Test Matrix
 on:
   workflow_call:
     inputs:
-      node-path:
-        description: "Path to custom node directory"
-        type: string
-        default: "."
       config-file:
         description: "Path to comfy-test.toml config file"
         type: string
         default: "comfy-test.toml"
-      comfy-test-ref:
-        description: "Git ref for comfy-test (branch, tag, or SHA)"
-        type: string
-        default: "main"
       timeout-minutes:
         description: "Job timeout in minutes"
         type: number
@@ -44,433 +23,114 @@ on:
         type: boolean
         default: false
 
-# =============================================================================
-# JOBS
-# =============================================================================
-
 jobs:
   # ---------------------------------------------------------------------------
-  # Step 0: Parse config to get Python version
+  # Setup: parse platform config
   # ---------------------------------------------------------------------------
-  parse-config:
+  setup:
     runs-on: ubuntu-latest
     outputs:
-      python-version: ${{ steps.config.outputs.python-version }}
+      run-linux: ${{ steps.platforms.outputs.linux }}
+      run-macos: ${{ steps.platforms.outputs.macos }}
+      run-windows: ${{ steps.platforms.outputs.windows }}
+      run-windows-portable: ${{ steps.platforms.outputs.windows-portable }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
-      - name: Parse python version from comfy-test.toml
-        id: config
+      - name: Parse platform config
+        id: platforms
         run: |
-          # Try to read python_version from config, default to random 3.11-3.13
-          if [ -f "${{ inputs.config-file }}" ]; then
-            version=$(grep -E "^python_version\s*=" "${{ inputs.config-file }}" 2>/dev/null | sed "s/.*=\s*[\"']\?\([^\"']*\)[\"']\?/\1/" | tr -d ' ')
-          fi
-          if [ -z "$version" ]; then
-            versions=("3.11" "3.12" "3.13")
-            version=${versions[$RANDOM % 3]}
-          fi
-          echo "python-version=$version" >> $GITHUB_OUTPUT
-          echo "Selected Python version: $version"
-
-  # ===========================================================================
-  # CPU TESTS (GitHub-hosted runners)
-  # ===========================================================================
+          config="${{ inputs.config-file }}"
+          get_platform() {
+            [ -f "$config" ] && grep -E "^$1\s*=" "$config" 2>/dev/null | grep -qi "false" && echo "false" || echo "true"
+          }
+          echo "linux=$(get_platform linux)" >> $GITHUB_OUTPUT
+          echo "macos=$(get_platform macos)" >> $GITHUB_OUTPUT
+          echo "windows=$(get_platform windows)" >> $GITHUB_OUTPUT
+          echo "windows-portable=$(get_platform windows_portable)" >> $GITHUB_OUTPUT
 
   # ---------------------------------------------------------------------------
-  # Linux CPU
+  # CPU tests (GitHub-hosted runners)
   # ---------------------------------------------------------------------------
-  test-linux-cpu:
-    needs: parse-config
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    env:
-      PYTHONUNBUFFERED: "1"
-    steps:
-      # Free disk space - GitHub's Ubuntu comes with ~15GB of bloat we don't need
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL &
-          sudo apt-get clean &
-          wait
+  linux-cpu:
+    needs: setup
+    if: needs.setup.outputs.run-linux == 'true'
+    uses: ./.github/workflows/_test-linux.yml
+    with:
+      config-file: ${{ inputs.config-file }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      gpu: false
 
-      # Checkout the CONSUMER repo (the custom node being tested)
-      - name: Checkout custom node
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+  macos-cpu:
+    needs: setup
+    if: needs.setup.outputs.run-macos == 'true'
+    uses: ./.github/workflows/_test-macos.yml
+    with:
+      config-file: ${{ inputs.config-file }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      gpu: false
 
-      # Checkout THIS repo (comfy-test) to get the test tooling
-      - name: Checkout comfy-test
-        uses: actions/checkout@v4
-        with:
-          repository: PozzettiAndrea/comfy-test
-          ref: ${{ inputs.comfy-test-ref }}
-          path: .comfy-test-src
-          fetch-depth: 1
+  windows-cpu:
+    needs: setup
+    if: needs.setup.outputs.run-windows == 'true'
+    uses: ./.github/workflows/_test-windows.yml
+    with:
+      config-file: ${{ inputs.config-file }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      gpu: false
 
-      # Setup ComfyUI environment (cached)
-      - name: Setup environment
-        uses: ./.comfy-test-src/.github/actions/setup
-        with:
-          python-version: ${{ needs.parse-config.outputs.python-version }}
-
-      # Install comfy-test (not cached, always fresh from repo)
-      # Use pip since venv is in PATH; uv can't auto-detect venv at $HOME/venv
-      - name: Install comfy-test
-        run: pip install "./.comfy-test-src[screenshot]"
-
-      # Run tests using cached ComfyUI
-      - name: Run tests
-        run: comfy-test run --platform linux --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
-
-      # Upload test results (screenshots, logs, etc.)
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-linux-cpu
-          path: comfy-test-results/
-          if-no-files-found: ignore
-          include-hidden-files: true
+  windows-portable-cpu:
+    needs: setup
+    if: needs.setup.outputs.run-windows-portable == 'true'
+    uses: ./.github/workflows/_test-windows-portable.yml
+    with:
+      config-file: ${{ inputs.config-file }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      gpu: false
 
   # ---------------------------------------------------------------------------
-  # macOS CPU
+  # GPU tests (self-hosted runners, optional)
   # ---------------------------------------------------------------------------
-  test-macos-cpu:
-    needs: parse-config
-    runs-on: macos-latest
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    env:
-      PYTHONUNBUFFERED: "1"
-    steps:
-      - name: Checkout custom node
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+  linux-gpu:
+    needs: setup
+    if: inputs.run-gpu && needs.setup.outputs.run-linux == 'true'
+    uses: ./.github/workflows/_test-linux.yml
+    with:
+      config-file: ${{ inputs.config-file }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      gpu: true
 
-      - name: Checkout comfy-test
-        uses: actions/checkout@v4
-        with:
-          repository: PozzettiAndrea/comfy-test
-          ref: ${{ inputs.comfy-test-ref }}
-          path: .comfy-test-src
-          fetch-depth: 1
+  macos-gpu:
+    needs: setup
+    if: inputs.run-gpu && needs.setup.outputs.run-macos == 'true'
+    uses: ./.github/workflows/_test-macos.yml
+    with:
+      config-file: ${{ inputs.config-file }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      gpu: true
 
-      - name: Setup environment
-        uses: ./.comfy-test-src/.github/actions/setup
-        with:
-          python-version: ${{ needs.parse-config.outputs.python-version }}
+  windows-gpu:
+    needs: setup
+    if: inputs.run-gpu && needs.setup.outputs.run-windows == 'true'
+    uses: ./.github/workflows/_test-windows.yml
+    with:
+      config-file: ${{ inputs.config-file }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      gpu: true
 
-      - name: Install comfy-test
-        run: pip install "./.comfy-test-src[screenshot]"
-
-      - name: Run tests
-        run: comfy-test run --platform macos --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
-
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-macos-cpu
-          path: comfy-test-results/
-          if-no-files-found: ignore
-          include-hidden-files: true
+  windows-portable-gpu:
+    needs: setup
+    if: inputs.run-gpu && needs.setup.outputs.run-windows-portable == 'true'
+    uses: ./.github/workflows/_test-windows-portable.yml
+    with:
+      config-file: ${{ inputs.config-file }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      gpu: true
 
   # ---------------------------------------------------------------------------
-  # Windows CPU
+  # Publish results
   # ---------------------------------------------------------------------------
-  test-windows-cpu:
-    needs: parse-config
-    runs-on: windows-latest
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    env:
-      PYTHONUNBUFFERED: "1"
-    steps:
-      - name: Checkout custom node
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Checkout comfy-test
-        uses: actions/checkout@v4
-        with:
-          repository: PozzettiAndrea/comfy-test
-          ref: ${{ inputs.comfy-test-ref }}
-          path: .comfy-test-src
-          fetch-depth: 1
-
-      - name: Setup environment
-        uses: ./.comfy-test-src/.github/actions/setup
-        with:
-          python-version: ${{ needs.parse-config.outputs.python-version }}
-
-      - name: Install comfy-test
-        run: pip install "./.comfy-test-src[screenshot]"
-
-      - name: Run tests
-        run: comfy-test run --platform windows --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
-
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-windows-cpu
-          path: comfy-test-results/
-          if-no-files-found: ignore
-          include-hidden-files: true
-
-  # ---------------------------------------------------------------------------
-  # Windows Portable CPU (tests the standalone ComfyUI distribution)
-  # ---------------------------------------------------------------------------
-  test-windows-portable-cpu:
-    needs: parse-config
-    runs-on: windows-latest
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    env:
-      PYTHONUNBUFFERED: "1"
-    steps:
-      - name: Checkout custom node
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Checkout comfy-test
-        uses: actions/checkout@v4
-        with:
-          repository: PozzettiAndrea/comfy-test
-          ref: ${{ inputs.comfy-test-ref }}
-          path: .comfy-test-src
-          fetch-depth: 1
-
-      - name: Setup environment
-        uses: ./.comfy-test-src/.github/actions/setup
-        with:
-          python-version: ${{ needs.parse-config.outputs.python-version }}
-          platform: windows-portable
-
-      - name: Install comfy-test
-        run: pip install "./.comfy-test-src[screenshot]"
-
-      - name: Run tests
-        run: comfy-test run --platform windows-portable --comfyui-dir $HOME/venv/ComfyUI_windows_portable/ComfyUI -c ${{ inputs.config-file }}
-
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: results-windows-portable-cpu
-          path: comfy-test-results/
-          if-no-files-found: ignore
-          include-hidden-files: true
-
-  # ===========================================================================
-  # GPU TESTS (Self-hosted runners - only run if run-gpu: true)
-  # ===========================================================================
-
-  test-linux-gpu:
-    if: ${{ inputs.run-gpu }}
-    needs: parse-config
-    runs-on: [self-hosted, linux, gpu]
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    env:
-      COMFY_TEST_GPU: "1"
-      PYTHONUNBUFFERED: "1"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - uses: actions/checkout@v4
-        with:
-          repository: PozzettiAndrea/comfy-test
-          ref: ${{ inputs.comfy-test-ref }}
-          path: .comfy-test-src
-          fetch-depth: 1
-      - uses: ./.comfy-test-src/.github/actions/setup
-        with:
-          python-version: ${{ needs.parse-config.outputs.python-version }}
-      - run: pip install "./.comfy-test-src[screenshot]"
-      - run: comfy-test run --platform linux --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: results-linux-gpu
-          path: comfy-test-results/
-          if-no-files-found: ignore
-          include-hidden-files: true
-
-  test-windows-gpu:
-    if: ${{ inputs.run-gpu }}
-    needs: parse-config
-    runs-on: [self-hosted, windows, gpu]
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    env:
-      COMFY_TEST_GPU: "1"
-      PYTHONUNBUFFERED: "1"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - uses: actions/checkout@v4
-        with:
-          repository: PozzettiAndrea/comfy-test
-          ref: ${{ inputs.comfy-test-ref }}
-          path: .comfy-test-src
-          fetch-depth: 1
-      - uses: ./.comfy-test-src/.github/actions/setup
-        with:
-          python-version: ${{ needs.parse-config.outputs.python-version }}
-      - run: pip install "./.comfy-test-src[screenshot]"
-      - run: comfy-test run --platform windows --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: results-windows-gpu
-          path: comfy-test-results/
-          if-no-files-found: ignore
-          include-hidden-files: true
-
-  test-windows-portable-gpu:
-    if: ${{ inputs.run-gpu }}
-    needs: parse-config
-    runs-on: [self-hosted, windows, gpu]
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    env:
-      COMFY_TEST_GPU: "1"
-      PYTHONUNBUFFERED: "1"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - uses: actions/checkout@v4
-        with:
-          repository: PozzettiAndrea/comfy-test
-          ref: ${{ inputs.comfy-test-ref }}
-          path: .comfy-test-src
-          fetch-depth: 1
-      - uses: ./.comfy-test-src/.github/actions/setup
-        with:
-          python-version: ${{ needs.parse-config.outputs.python-version }}
-          platform: windows-portable
-      - run: pip install "./.comfy-test-src[screenshot]"
-      - run: comfy-test run --platform windows-portable --comfyui-dir $HOME/venv/ComfyUI_windows_portable/ComfyUI -c ${{ inputs.config-file }}
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: results-windows-portable-gpu
-          path: comfy-test-results/
-          if-no-files-found: ignore
-          include-hidden-files: true
-
-  test-macos-gpu:
-    if: ${{ inputs.run-gpu }}
-    needs: parse-config
-    runs-on: [self-hosted, macos, gpu]
-    timeout-minutes: ${{ inputs.timeout-minutes }}
-    env:
-      COMFY_TEST_GPU: "1"
-      PYTHONUNBUFFERED: "1"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - uses: actions/checkout@v4
-        with:
-          repository: PozzettiAndrea/comfy-test
-          ref: ${{ inputs.comfy-test-ref }}
-          path: .comfy-test-src
-          fetch-depth: 1
-      - uses: ./.comfy-test-src/.github/actions/setup
-        with:
-          python-version: ${{ needs.parse-config.outputs.python-version }}
-      - run: pip install "./.comfy-test-src[screenshot]"
-      - run: comfy-test run --platform macos --comfyui-dir $HOME/venv/ComfyUI -c ${{ inputs.config-file }}
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: results-macos-gpu
-          path: comfy-test-results/
-          if-no-files-found: ignore
-          include-hidden-files: true
-
-  # ===========================================================================
-  # PUBLISH RESULTS TO GH-PAGES
-  # ===========================================================================
-
   publish:
-    needs: [test-linux-cpu, test-macos-cpu, test-windows-cpu, test-windows-portable-cpu]
+    needs: [linux-cpu, macos-cpu, windows-cpu, windows-portable-cpu, linux-gpu, macos-gpu, windows-gpu, windows-portable-gpu]
     if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout comfy-test (for generate-index command)
-        uses: actions/checkout@v4
-        with:
-          repository: PozzettiAndrea/comfy-test
-          ref: ${{ inputs.comfy-test-ref }}
-          path: .comfy-test-src
-          fetch-depth: 1
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - run: pip install ./.comfy-test-src
-
-      - name: Download all test artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Checkout existing gh-pages (if exists)
-        uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-          path: gh-pages
-          fetch-depth: 1
-        continue-on-error: true
-
-      - name: Prepare gh-pages structure
-        run: |
-          mkdir -p gh-pages
-          # Auto-detect branch: use branch name as subdirectory on push events
-          if [ "${{ github.event_name }}" = "push" ]; then
-            BRANCH="${{ github.ref_name }}"
-            TARGET="gh-pages/$BRANCH"
-          else
-            # For PRs, use a temp directory that won't be published
-            TARGET="gh-pages/_pr"
-          fi
-          # Clear only the target directory (preserve other branch subdirs)
-          rm -rf "$TARGET"
-          mkdir -p "$TARGET"
-          # Copy each platform's results to target
-          for dir in artifacts/results-*; do
-            if [ -d "$dir" ]; then
-              name=$(basename "$dir" | sed 's/results-//')
-              mkdir -p "$TARGET/$name"
-              cp -r "$dir"/* "$TARGET/$name/" 2>/dev/null || true
-            fi
-          done
-          touch gh-pages/.nojekyll
-          # Store branch name for later steps
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-          echo "TARGET=$TARGET" >> $GITHUB_ENV
-
-      - name: Generate branch index page
-        if: github.event_name == 'push'
-        run: comfy-test generate-index "gh-pages/$BRANCH" --repo-name "${{ github.repository }}"
-
-      - name: Generate root index with branch switcher
-        if: github.event_name == 'push'
-        run: comfy-test generate-root-index gh-pages --repo-name "${{ github.repository }}"
-
-      - name: Publish to gh-pages
-        if: github.event_name == 'push'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: gh-pages
-          publish_dir: gh-pages
-          keep_files: true
+    uses: ./.github/workflows/_publish-results.yml

@@ -1,0 +1,92 @@
+# Windows test workflow - called by test-matrix.yml
+name: Test Windows
+
+on:
+  workflow_call:
+    inputs:
+      config-file:
+        type: string
+        default: "comfy-test.toml"
+      timeout-minutes:
+        type: number
+        default: 60
+      gpu:
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ${{ inputs.gpu && fromJSON('["self-hosted", "windows", "gpu"]') || 'windows-latest' }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      COMFY_TEST_GPU: ${{ inputs.gpu && '1' || '' }}
+      NODE_NAME: ${{ github.event.repository.name }}
+      COMFYUI_DIR: ${{ github.workspace }}/ComfyUI
+      TOOLS_VENV: ${{ github.workspace }}/.tools-venv
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # --- Single cache ---
+      - uses: actions/cache/restore@v4
+        id: setup-cache
+        with:
+          path: |
+            ${{ env.TOOLS_VENV }}
+            ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+            ${{ env.COMFYUI_DIR }}
+          key: setup-${{ runner.os }}
+
+      # --- Setup (skip if cached) ---
+      - name: Setup environment
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python -m venv $TOOLS_VENV
+          $TOOLS_VENV/Scripts/pip install uv playwright
+
+          git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git $COMFYUI_DIR
+          $TOOLS_VENV/Scripts/uv pip install --system -r $COMFYUI_DIR/requirements.txt
+
+          $TOOLS_VENV/Scripts/playwright install chromium
+
+      # --- Save cache ---
+      - uses: actions/cache/save@v4
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ env.TOOLS_VENV }}
+            ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+            ${{ env.COMFYUI_DIR }}
+          key: setup-${{ runner.os }}
+
+      # --- Install comfy-test (fresh) ---
+      - name: Install comfy-test
+        run: pip install comfy-test
+
+      # --- Checkout and run ---
+      - uses: actions/checkout@v4
+        with:
+          path: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ github.event.repository.name }}
+
+      - name: Install node dependencies
+        shell: bash
+        working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
+        run: |
+          [ -f requirements.txt ] && $TOOLS_VENV/Scripts/uv pip install --system -r requirements.txt || true
+          [ -f install.py ] && python install.py || true
+
+      - name: Run tests
+        working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
+        run: comfy-test run
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-windows-${{ inputs.gpu && 'gpu' || 'cpu' }}
+          path: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}/comfy-test-results/
+          if-no-files-found: ignore
+          include-hidden-files: true

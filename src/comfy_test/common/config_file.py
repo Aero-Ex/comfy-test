@@ -36,7 +36,7 @@ else:
         tomllib = None  # type: ignore
 
 from .config import TestConfig, TestLevel, WorkflowConfig, PlatformTestConfig
-from ..errors import ConfigError
+from .errors import ConfigError
 
 
 # Config file names to search for

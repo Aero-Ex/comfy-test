@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Callable
 from .api import ComfyUIAPI
 from .models import WorkflowExecution
 from .workflow_converter import WorkflowConverter, set_object_info
-from ..errors import WorkflowError
+from ..common.errors import WorkflowError
 
 
 def is_litegraph_format(workflow: Dict[str, Any]) -> bool:

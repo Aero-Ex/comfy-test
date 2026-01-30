@@ -7,16 +7,16 @@ import sys
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
-from .base import TestPlatform, TestPaths
+from ...common.base_platform import TestPlatform, TestPaths
 
 if TYPE_CHECKING:
-    from ..config import TestConfig
+    from ...common.config import TestConfig
 
 
 COMFYUI_REPO = "https://github.com/comfyanonymous/ComfyUI.git"
 
 
-class MacOSTestPlatform(TestPlatform):
+class MacOSPlatform(TestPlatform):
     """macOS platform implementation for ComfyUI testing.
 
     Uses a virtual environment for isolation and safety.
@@ -31,11 +31,19 @@ class MacOSTestPlatform(TestPlatform):
     def executable_suffix(self) -> str:
         return ""
 
+    def is_ci(self) -> bool:
+        """Detect if running in CI environment."""
+        return os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+
+    def is_gpu_mode(self) -> bool:
+        """Detect if GPU mode is enabled (MPS on Apple Silicon)."""
+        return bool(os.environ.get("COMFY_TEST_GPU"))
+
     def _uv_install(self, python: Path, args: list, cwd: Path, env: Optional[dict] = None) -> None:
         """Install packages using uv pip."""
         cmd = [str(python), "-m", "uv", "pip", "install"] + args
 
-        # Use local wheels if available (for local testing with ct test)
+        # Use local wheels if available
         local_wheels = os.environ.get("COMFY_LOCAL_WHEELS")
         if local_wheels and Path(local_wheels).exists():
             cmd.extend(["--find-links", local_wheels])
@@ -92,9 +100,6 @@ class MacOSTestPlatform(TestPlatform):
 
         # Install PyTorch (standard PyTorch works for both CPU and MPS on macOS)
         self._log("Installing PyTorch...")
-        gpu_mode = os.environ.get("COMFY_TEST_GPU")
-        # On macOS, standard PyTorch includes MPS support for Apple Silicon
-        # No special index URL needed
         self._uv_install(python, ["torch", "torchvision", "torchaudio"], work_dir)
 
         # Install ComfyUI requirements
@@ -133,7 +138,7 @@ class MacOSTestPlatform(TestPlatform):
 
         target_dir.symlink_to(node_dir)
 
-        # Install requirements.txt first (install.py may depend on these)
+        # Install requirements.txt first
         requirements_file = node_dir / "requirements.txt"
         if requirements_file.exists():
             self._log("Installing node requirements...")
@@ -143,8 +148,6 @@ class MacOSTestPlatform(TestPlatform):
         install_py = node_dir / "install.py"
         if install_py.exists():
             self._log("Running install.py...")
-            # Note: CUDA version env var is still set for compatibility,
-            # but macOS uses MPS (Metal Performance Shaders) for GPU
             install_env = {"COMFY_ENV_CUDA_VERSION": "12.8"}
             self._run_command(
                 [str(paths.python), str(install_py)],
@@ -170,9 +173,7 @@ class MacOSTestPlatform(TestPlatform):
         ]
 
         # Use CPU mode unless GPU mode is explicitly enabled
-        # On macOS with Apple Silicon, GPU mode uses MPS (Metal)
-        gpu_mode = os.environ.get("COMFY_TEST_GPU")
-        if not gpu_mode:
+        if not self.is_gpu_mode():
             cmd.append("--cpu")
 
         # Set environment

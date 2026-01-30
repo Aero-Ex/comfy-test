@@ -7,10 +7,10 @@ import sys
 from pathlib import Path
 from typing import Optional, Callable, TYPE_CHECKING
 
-from .base import TestPlatform, TestPaths
+from ...common.base_platform import TestPlatform, TestPaths
 
 if TYPE_CHECKING:
-    from ..config import TestConfig
+    from ...common.config import TestConfig
 
 
 COMFYUI_REPO = "https://github.com/comfyanonymous/ComfyUI.git"
@@ -116,7 +116,7 @@ def _gitignore_filter(base_dir: Path, work_dir: Path = None):
     return ignore_func
 
 
-class WindowsTestPlatform(TestPlatform):
+class WindowsPlatform(TestPlatform):
     """Windows platform implementation for ComfyUI testing.
 
     Creates a venv for isolated testing (avoids admin requirements).
@@ -134,6 +134,14 @@ class WindowsTestPlatform(TestPlatform):
     @property
     def executable_suffix(self) -> str:
         return ".exe"
+
+    def is_ci(self) -> bool:
+        """Detect if running in CI environment."""
+        return os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+
+    def is_gpu_mode(self) -> bool:
+        """Detect if GPU mode is enabled."""
+        return bool(os.environ.get("COMFY_TEST_GPU"))
 
     def _uv_install(self, python: Path, args: list, cwd: Path) -> None:
         """Run uv pip install with local wheels if available."""
@@ -303,8 +311,7 @@ class WindowsTestPlatform(TestPlatform):
         ]
 
         # Use CPU mode unless GPU mode is explicitly enabled
-        gpu_mode = os.environ.get("COMFY_TEST_GPU")
-        if not gpu_mode:
+        if not self.is_gpu_mode():
             cmd.append("--cpu")
 
         # Set environment

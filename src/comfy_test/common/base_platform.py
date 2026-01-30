@@ -7,7 +7,7 @@ from typing import Optional, Callable, TYPE_CHECKING
 import subprocess
 
 if TYPE_CHECKING:
-    from ..config import TestConfig
+    from .config import TestConfig
 
 
 @dataclass
@@ -31,7 +31,7 @@ class TestPlatform(ABC):
     """
     Abstract base class for platform-specific test operations.
 
-    Each platform (Linux, Windows, WindowsPortable) implements this
+    Each platform (Linux, Windows, WindowsPortable, macOS) implements this
     to provide consistent test behavior across operating systems.
     """
 
@@ -47,7 +47,7 @@ class TestPlatform(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Platform name: 'linux', 'windows', 'windows_portable'."""
+        """Platform name: 'linux', 'windows', 'windows_portable', 'macos'."""
         pass
 
     @property

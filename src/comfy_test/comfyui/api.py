@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 import requests
 import websocket
 
-from ..errors import ServerError, TestTimeoutError, VerificationError
+from ..common.errors import ServerError, TestTimeoutError, VerificationError
 from .models import WorkflowExecution
 
 

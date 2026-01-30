@@ -6,9 +6,10 @@ This module provides simple entry points for common testing operations.
 from pathlib import Path
 from typing import Optional, List
 
-from .test.config import TestConfig
-from .test.config_file import discover_config, load_config
-from .test.manager import TestManager, TestResult
+from .common.config import TestConfig
+from .common.config_file import discover_config, load_config
+from .orchestration.manager import TestManager
+from .orchestration.results import TestResult
 
 
 def run_tests(
