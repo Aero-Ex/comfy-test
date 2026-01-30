@@ -24,6 +24,7 @@ jobs:
       NODE_NAME: ${{ github.event.repository.name }}
       COMFYUI_DIR: ${{ github.workspace }}/ComfyUI
       TOOLS_VENV: ${{ github.workspace }}/.tools-venv
+      COMFY_VENV: ${{ github.workspace }}/.comfy-venv
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright
     steps:
       - uses: actions/setup-python@v5
@@ -38,8 +39,8 @@ jobs:
             ${{ env.TOOLS_VENV }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
-            ${{ env.pythonLocation }}
-          key: setup-${{ runner.os }}
+            ${{ env.COMFY_VENV }}
+          key: setup-${{ runner.os }}-v2
 
       # --- Setup (skip if cached) ---
       - name: Setup environment
@@ -50,7 +51,9 @@ jobs:
           $TOOLS_VENV/Scripts/pip install uv playwright
 
           git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git $COMFYUI_DIR
-          $TOOLS_VENV/Scripts/uv pip install --system -r $COMFYUI_DIR/requirements.txt
+
+          python -m venv $COMFY_VENV
+          $TOOLS_VENV/Scripts/uv pip install --python $COMFY_VENV/Scripts/python -r $COMFYUI_DIR/requirements.txt
 
           $TOOLS_VENV/Scripts/playwright install chromium
 
@@ -62,12 +65,13 @@ jobs:
             ${{ env.TOOLS_VENV }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
-            ${{ env.pythonLocation }}
-          key: setup-${{ runner.os }}
+            ${{ env.COMFY_VENV }}
+          key: setup-${{ runner.os }}-v2
 
       # --- Install comfy-test (fresh) ---
       - name: Install comfy-test
-        run: pip install comfy-test
+        shell: bash
+        run: $COMFY_VENV/Scripts/pip install comfy-test
 
       # --- Checkout and run ---
       - uses: actions/checkout@v4
@@ -78,12 +82,13 @@ jobs:
         shell: bash
         working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
         run: |
-          [ -f requirements.txt ] && $TOOLS_VENV/Scripts/uv pip install --system -r requirements.txt || true
-          [ -f install.py ] && python install.py || true
+          [ -f requirements.txt ] && $TOOLS_VENV/Scripts/uv pip install --python $COMFY_VENV/Scripts/python -r requirements.txt || true
+          [ -f install.py ] && $COMFY_VENV/Scripts/python install.py || true
 
       - name: Run tests
+        shell: bash
         working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
-        run: comfy-test run
+        run: $COMFY_VENV/Scripts/comfy-test run
 
       - uses: actions/upload-artifact@v4
         if: always()
