@@ -52,7 +52,7 @@ jobs:
           git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git $COMFYUI_DIR
 
           python -m venv $COMFY_VENV
-          $TOOLS_VENV/bin/uv pip install --python $COMFY_VENV/bin/python -r $COMFYUI_DIR/requirements.txt
+          $TOOLS_VENV/bin/uv pip install --python "$COMFY_VENV" -r $COMFYUI_DIR/requirements.txt
 
           $TOOLS_VENV/bin/playwright install chromium
 
@@ -79,7 +79,7 @@ jobs:
       - name: Install node dependencies
         working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
         run: |
-          [ -f requirements.txt ] && $TOOLS_VENV/bin/uv pip install --python $COMFY_VENV/bin/python -r requirements.txt || true
+          [ -f requirements.txt ] && $TOOLS_VENV/bin/uv pip install --python "$COMFY_VENV" -r requirements.txt || true
           [ -f install.py ] && $COMFY_VENV/bin/python install.py || true
 
       - name: Run tests
