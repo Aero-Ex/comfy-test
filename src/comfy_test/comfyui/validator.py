@@ -94,7 +94,7 @@ class WorkflowValidator:
             ValidationResult
         """
         workflow_path = Path(workflow_path)
-        with open(workflow_path) as f:
+        with open(workflow_path, encoding='utf-8-sig') as f:
             workflow = json.load(f)
         return self.validate(workflow)
 

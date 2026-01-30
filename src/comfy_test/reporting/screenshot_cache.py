@@ -108,7 +108,7 @@ class ScreenshotCache:
             return None
 
         try:
-            with open(workflow_path) as f:
+            with open(workflow_path, encoding='utf-8-sig') as f:
                 workflow = json.load(f)
         except (json.JSONDecodeError, OSError):
             return None

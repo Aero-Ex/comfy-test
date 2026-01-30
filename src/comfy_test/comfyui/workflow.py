@@ -89,7 +89,7 @@ class WorkflowRunner:
 
         # Load workflow
         self._log(f"Loading workflow from {workflow_file}...")
-        with open(workflow_file, "r") as f:
+        with open(workflow_file, "r", encoding='utf-8-sig') as f:
             workflow_data = json.load(f)
 
         # Extract the prompt (workflow definition)
