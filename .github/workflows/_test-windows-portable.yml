@@ -75,8 +75,9 @@ jobs:
         run: |
           $PYTHON_EXE -m pip install comfy-test
           # Install Playwright into embedded Python (not just TOOLS_VENV)
-          # Browsers are cached via PLAYWRIGHT_BROWSERS_PATH, just need the library
           $PYTHON_EXE -m pip install playwright pillow
+          # Install browsers - uses PLAYWRIGHT_BROWSERS_PATH, downloads if version mismatch
+          $PYTHON_EXE -m playwright install chromium
 
       # --- Checkout and run ---
       - uses: actions/checkout@v4
