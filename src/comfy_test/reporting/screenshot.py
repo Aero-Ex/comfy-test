@@ -1210,7 +1210,7 @@ class WorkflowScreenshot:
                 "frames": frame_metadata,
                 "total_time": total_time,
             }
-            (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2))
+            (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding='utf-8')
 
             return frame_paths
 

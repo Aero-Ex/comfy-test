@@ -89,7 +89,7 @@ class ScreenshotCache:
         cache_path = self._get_cache_path(screenshot_path)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(cache_path, 'w') as f:
+        with open(cache_path, 'w', encoding='utf-8') as f:
             json.dump(fingerprint, f, indent=2)
 
     def _get_cache_path(self, screenshot_path: Path) -> Path:

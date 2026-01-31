@@ -250,7 +250,7 @@ def merge_with_gh_pages(
     merged = merge_results(new_results, old_results)
 
     # Write merged results
-    results_file.write_text(json.dumps(merged, indent=2))
+    results_file.write_text(json.dumps(merged, indent=2), encoding='utf-8')
     log(f"Merged results: {merged['summary']['passed']} passed, {merged['summary']['failed']} failed, {merged['summary'].get('skipped', 0)} skipped")
 
     return True

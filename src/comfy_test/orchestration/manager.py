@@ -760,7 +760,7 @@ class TestManager:
                             "workflows": results
                         }
                         results_file = self._get_output_base() / "results.json"
-                        results_file.write_text(json.dumps(results_data, indent=2))
+                        results_file.write_text(json.dumps(results_data, indent=2), encoding='utf-8')
                         self._log(f"Results saved to {results_file}")
 
                         # Generate HTML report

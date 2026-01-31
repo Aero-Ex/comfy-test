@@ -1481,7 +1481,7 @@ def generate_root_index(output_dir: Path, repo_name: Optional[str] = None) -> Pa
 '''
 
     index_file = output_dir / 'index.html'
-    index_file.write_text(html_content)
+    index_file.write_text(html_content, encoding='utf-8')
     return index_file
 
 
@@ -1684,5 +1684,5 @@ def generate_branch_root_index(output_dir: Path, repo_name: Optional[str] = None
 '''
 
     index_file = output_dir / 'index.html'
-    index_file.write_text(html_content)
+    index_file.write_text(html_content, encoding='utf-8')
     return index_file

@@ -29,7 +29,7 @@ def save_state(state: TestState, work_dir: Path) -> None:
     """Save test state to work directory for later resumption."""
     state_file = work_dir / "state.json"
     work_dir.mkdir(parents=True, exist_ok=True)
-    with open(state_file, "w") as f:
+    with open(state_file, "w", encoding='utf-8') as f:
         json.dump(asdict(state), f, indent=2)
 
 
