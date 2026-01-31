@@ -56,7 +56,7 @@ class ScreenshotCache:
             return True
 
         try:
-            with open(cache_path) as f:
+            with open(cache_path, encoding='utf-8-sig') as f:
                 stored = json.load(f)
         except (json.JSONDecodeError, OSError):
             return True

@@ -41,7 +41,7 @@ def load_state(work_dir: Path) -> TestState:
             "No state file found",
             f"Expected {state_file}. Run install level first with --work-dir."
         )
-    with open(state_file) as f:
+    with open(state_file, encoding='utf-8-sig') as f:
         data = json.load(f)
     return TestState(**data)
 

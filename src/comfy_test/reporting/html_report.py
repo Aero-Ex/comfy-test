@@ -168,7 +168,7 @@ def generate_html_report(output_dir: Path, repo_name: Optional[str] = None, curr
     if not results_file.exists():
         raise FileNotFoundError(f"No results.json found in {output_dir}")
 
-    results = json.loads(results_file.read_text())
+    results = json.loads(results_file.read_text(encoding='utf-8-sig'))
 
     # Discover available screenshots and logs
     screenshots = {f.stem.replace("_executed", ""): f.name
@@ -184,7 +184,7 @@ def generate_html_report(output_dir: Path, repo_name: Optional[str] = None, curr
                 metadata_file = workflow_dir / "metadata.json"
                 if metadata_file.exists():
                     try:
-                        video_data[workflow_dir.name] = json.loads(metadata_file.read_text())
+                        video_data[workflow_dir.name] = json.loads(metadata_file.read_text(encoding='utf-8-sig'))
                     except Exception:
                         pass
 
