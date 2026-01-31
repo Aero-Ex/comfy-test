@@ -72,7 +72,11 @@ jobs:
       # --- Install comfy-test (fresh, to embedded Python) ---
       - name: Install comfy-test
         shell: bash
-        run: $PYTHON_EXE -m pip install comfy-test
+        run: |
+          $PYTHON_EXE -m pip install comfy-test
+          # Install Playwright into embedded Python (not just TOOLS_VENV)
+          # Browsers are cached via PLAYWRIGHT_BROWSERS_PATH, just need the library
+          $PYTHON_EXE -m pip install playwright pillow
 
       # --- Checkout and run ---
       - uses: actions/checkout@v4
