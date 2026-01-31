@@ -217,7 +217,7 @@ def merge_with_gh_pages(
         log("No results.json found, nothing to merge")
         return False
 
-    new_results = json.loads(results_file.read_text())
+    new_results = json.loads(results_file.read_text(encoding='utf-8-sig'))
 
     # Check if we have any skipped workflows
     skipped = [w for w in new_results.get("workflows", []) if w.get("status") == "skipped"]
