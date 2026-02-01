@@ -85,18 +85,19 @@ class WorkflowConfig:
 
     Args:
         workflows: All discovered workflow files (auto-populated)
-        gpu: Workflows that require GPU to execute (skipped on non-GPU environments).
-             Can be set to all workflows or a subset.
+        cpu: Workflows to run on CPU runners (GitHub-hosted). If empty, skip CPU jobs.
+        gpu: Workflows to run on GPU runners (self-hosted). If empty, skip GPU jobs.
         timeout: Timeout in seconds for workflow execution
 
         # Deprecated fields (for backwards compatibility)
-        run: Deprecated - all workflows are now run
+        run: Deprecated - use cpu instead
         screenshot: Deprecated - all workflows are now screenshotted
         files: Deprecated - use workflows folder
         file: Deprecated - use workflows folder
     """
 
     workflows: List[Path] = field(default_factory=list)
+    cpu: List[Path] = field(default_factory=list)
     gpu: List[Path] = field(default_factory=list)
     timeout: int = 3600  # Default 60 minutes
 
@@ -117,8 +118,13 @@ class WorkflowConfig:
             elif self.file is not None:
                 self.workflows = [Path(self.file)]
 
+        # Backwards compatibility: if 'run' specified but not cpu/gpu, treat as cpu
+        if self.run and not self.cpu and not self.gpu:
+            self.cpu = list(self.run)
+
         # Normalize to Path objects
         self.workflows = [Path(f) for f in self.workflows]
+        self.cpu = [Path(f) for f in self.cpu]
         self.gpu = [Path(f) for f in self.gpu]
         self.run = [Path(f) for f in self.run]
         self.screenshot = [Path(f) for f in self.screenshot]

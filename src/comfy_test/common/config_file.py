@@ -257,7 +257,8 @@ def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConf
     Screenshots are always taken. Workflows run in alphabetical order.
 
     Supports:
-      - gpu = "all" or gpu = [...] - workflows requiring GPU for execution
+      - cpu = "all" or cpu = [...] - workflows to run on CPU runners
+      - gpu = "all" or gpu = [...] - workflows to run on GPU runners
     """
     workflows_dir = base_dir / "workflows"
 
@@ -272,8 +273,11 @@ def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConf
     # Auto-discover all workflows (alphabetical order)
     workflows = resolve_workflows("all")
 
-    # Parse gpu option - supports "all" or list
+    # Parse cpu/gpu options - supports "all" or list
+    cpu = []
     gpu = []
+    if "cpu" in data:
+        cpu = resolve_workflows(data["cpu"])
     if "gpu" in data:
         gpu = resolve_workflows(data["gpu"])
 
@@ -288,6 +292,9 @@ def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConf
         # If explicit run list provided, use it instead of auto-discover
         if run:
             workflows = run
+        # Backward compat: if 'run' specified but not cpu/gpu, treat as cpu
+        if not cpu and not gpu:
+            cpu = run
     if "screenshot" in data:
         screenshot = resolve_workflows(data["screenshot"])
     if "files" in data:
@@ -302,6 +309,7 @@ def _parse_workflow_config(data: Dict[str, Any], base_dir: Path) -> WorkflowConf
     # Build kwargs
     kwargs = {
         "workflows": workflows,
+        "cpu": cpu,
         "gpu": gpu,
         "run": run,
         "screenshot": screenshot,
