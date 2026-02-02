@@ -49,7 +49,7 @@ jobs:
       # --- Setup (skip if cached) ---
       - name: Setup environment
         if: steps.setup-cache.outputs.cache-hit != 'true'
-        shell: pwsh
+        shell: powershell
         run: |
           # Install Python via uv (into workspace)
           uv python install 3.13
@@ -79,7 +79,7 @@ jobs:
 
       # --- Install comfy-test (fresh, to embedded Python) ---
       - name: Install comfy-test
-        shell: pwsh
+        shell: powershell
         run: |
           & $env:PYTHON_EXE -m pip install comfy-test
           # Install Playwright into embedded Python (not just TOOLS_VENV)
@@ -93,7 +93,7 @@ jobs:
           path: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ github.event.repository.name }}
 
       - name: Install node dependencies
-        shell: pwsh
+        shell: powershell
         working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
         run: |
           if (Test-Path "requirements.txt") {
@@ -104,14 +104,14 @@ jobs:
           }
 
       - name: Install validate endpoint
-        shell: pwsh
+        shell: powershell
         run: |
           # Install validate endpoint BEFORE server starts (server doesn't load new nodes after startup)
           git clone --depth 1 https://github.com/PozzettiAndrea/ComfyUI-validate-endpoint.git "$env:COMFYUI_DIR/custom_nodes/ComfyUI-validate-endpoint" 2>$null
           $true  # Don't fail if already exists
 
       - name: Start ComfyUI server
-        shell: pwsh
+        shell: powershell
         working-directory: ${{ github.workspace }}/ComfyUI_windows_portable
         run: |
           # Run exact command from batch file (without pause)
@@ -136,7 +136,7 @@ jobs:
           }
 
       - name: Run tests
-        shell: pwsh
+        shell: powershell
         working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
         run: |
           & $env:PYTHON_EXE -m comfy_test run --server-url http://localhost:8188
@@ -152,7 +152,7 @@ jobs:
       # --- Cleanup (no trace on self-hosted) ---
       - name: Cleanup workspace
         if: always()
-        shell: pwsh
+        shell: powershell
         run: |
           Remove-Item -Path "$env:GITHUB_WORKSPACE/*" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "$env:GITHUB_WORKSPACE/.*" -Recurse -Force -ErrorAction SilentlyContinue

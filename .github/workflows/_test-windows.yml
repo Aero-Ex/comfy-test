@@ -50,7 +50,7 @@ jobs:
       # --- Setup (skip if cached) ---
       - name: Setup environment
         if: steps.setup-cache.outputs.cache-hit != 'true'
-        shell: pwsh
+        shell: powershell
         run: |
           # Install Python via uv (into workspace)
           uv python install 3.13
@@ -83,7 +83,7 @@ jobs:
 
       # --- Install comfy-test (fresh) ---
       - name: Install comfy-test
-        shell: pwsh
+        shell: powershell
         run: |
           & "$env:COMFY_VENV/Scripts/pip" install comfy-test
 
@@ -93,7 +93,7 @@ jobs:
           path: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ github.event.repository.name }}
 
       - name: Install node dependencies
-        shell: pwsh
+        shell: powershell
         working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
         run: |
           if (Test-Path "requirements.txt") {
@@ -104,7 +104,7 @@ jobs:
           }
 
       - name: Run tests
-        shell: pwsh
+        shell: powershell
         working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
         run: |
           & "$env:COMFY_VENV/Scripts/comfy-test" run
@@ -120,7 +120,7 @@ jobs:
       # --- Cleanup (no trace on self-hosted) ---
       - name: Cleanup workspace
         if: always()
-        shell: pwsh
+        shell: powershell
         run: |
           Remove-Item -Path "$env:GITHUB_WORKSPACE/*" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "$env:GITHUB_WORKSPACE/.*" -Recurse -Force -ErrorAction SilentlyContinue
