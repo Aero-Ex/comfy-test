@@ -57,7 +57,7 @@ jobs:
 
           # Create tools venv
           uv venv $env:TOOLS_VENV --python 3.13
-          & "$env:TOOLS_VENV\Scripts\pip" install playwright
+          uv pip install --python "$env:TOOLS_VENV" playwright
 
           # Clone ComfyUI
           git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git $env:COMFYUI_DIR
@@ -85,7 +85,7 @@ jobs:
       - name: Install comfy-test
         shell: powershell
         run: |
-          & "$env:COMFY_VENV\Scripts\pip" install comfy-test
+          uv pip install --python "$env:COMFY_VENV" comfy-test
 
       # --- Checkout and run ---
       - uses: actions/checkout@v4

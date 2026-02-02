@@ -56,7 +56,7 @@ jobs:
 
           # Tools venv (for playwright only)
           uv venv $env:TOOLS_VENV --python 3.13
-          & "$env:TOOLS_VENV\Scripts\pip" install playwright
+          uv pip install --python "$env:TOOLS_VENV" playwright
 
           # Download portable ComfyUI
           Invoke-WebRequest -Uri "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z" -OutFile "portable.7z"
