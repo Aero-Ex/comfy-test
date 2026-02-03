@@ -105,6 +105,10 @@ jobs:
         shell: powershell
         working-directory: ${{ github.workspace }}\ComfyUI_windows_portable
         run: |
+          # Unset RUNNER_TRACKING_ID so the runner doesn't kill the server between steps
+          # See: https://github.com/actions/runner/issues/598
+          $env:RUNNER_TRACKING_ID = ""
+
           if ($env:COMFY_TEST_GPU -eq "1") {
             Write-Host "Starting GPU server..."
             Start-Process -FilePath $env:PYTHON_EXE -ArgumentList "-s", "ComfyUI\main.py", "--windows-standalone-build" -NoNewWindow
