@@ -96,11 +96,12 @@ jobs:
         shell: powershell
         working-directory: ${{ env.COMFYUI_DIR }}\custom_nodes\${{ env.NODE_NAME }}
         run: |
+          & "$env:COMFY_VENV\Scripts\Activate.ps1"
           if (Test-Path "requirements.txt") {
-            uv pip install --python $env:COMFY_VENV -r requirements.txt
+            uv pip install -r requirements.txt
           }
           if (Test-Path "install.py") {
-            & "$env:COMFY_VENV\Scripts\python" install.py
+            python install.py
           }
 
       - name: Run tests
