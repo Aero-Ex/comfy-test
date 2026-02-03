@@ -44,9 +44,18 @@ jobs:
         if: steps.setup-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          Invoke-WebRequest -Uri "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z" -OutFile "portable.7z"
+          curl.exe -L --progress-bar -o portable.7z "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z"
+
+      - name: Extract portable ComfyUI
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
           & "C:\Program Files\7-Zip\7z.exe" x portable.7z -y
-          Remove-Item portable.7z
+
+      - name: Remove portable archive
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        shell: powershell
+        run: Remove-Item portable.7z
 
       # --- Save cache ---
       - uses: actions/cache/save@v4
