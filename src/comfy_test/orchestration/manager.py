@@ -212,6 +212,10 @@ class TestManager:
         # Resolve dependencies
         config_levels = TestLevel.resolve_dependencies(requested_levels)
 
+        # Skip INSTALL and SYNTAX levels when connecting to existing server
+        if server_url:
+            config_levels = [l for l in config_levels if l not in (TestLevel.SYNTAX, TestLevel.INSTALL)]
+
         # Calculate total levels for progress
         self._level_index = 0
         self._total_levels = len([l for l in ALL_LEVELS if l in config_levels])
