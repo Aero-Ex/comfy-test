@@ -243,6 +243,26 @@ class TestManager:
         faulthandler.enable(file=crash_log_file)
         self._log(f"Crash dump logging enabled: {crash_log_path}")
 
+        # Infer paths when using external server (INSTALL level is skipped)
+        inferred_paths = None
+        if server_url:
+            from ..common.base_platform import TestPaths
+            custom_nodes_dir = self.node_dir.parent
+            inferred_comfyui_dir = comfyui_dir or custom_nodes_dir.parent
+            # Try to find Python executable
+            import sys
+            python_path = Path(sys.executable)
+            # On Windows portable, Python is in python_embeded/
+            portable_python = inferred_comfyui_dir.parent / "python_embeded" / "python.exe"
+            if portable_python.exists():
+                python_path = portable_python
+            inferred_paths = TestPaths(
+                work_dir=output_base,
+                comfyui_dir=inferred_comfyui_dir,
+                python=python_path,
+                custom_nodes_dir=custom_nodes_dir,
+            )
+
         # Create initial context
         ctx = LevelContext(
             config=self.config,
@@ -254,6 +274,7 @@ class TestManager:
             comfyui_dir=comfyui_dir,
             server_url=server_url,
             workflow_filter=workflow_filter,
+            paths=inferred_paths,
         )
 
         try:
