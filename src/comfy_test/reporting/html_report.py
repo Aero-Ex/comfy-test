@@ -13,6 +13,7 @@ import re
 from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
+from string import Template
 from typing import Dict, List, Any, Optional
 import subprocess
 
@@ -265,9 +266,9 @@ def _render_report(
     failed_section = _render_failed_section(failed_workflows, log_contents)
     workflow_cards, workflow_data_js = _render_workflow_cards(workflows, screenshots, log_contents)
 
-    # Load and fill template
-    template = _load_template("report.html")
-    return template.format(
+    # Load and fill template (using string.Template to avoid escaping CSS braces)
+    template = Template(_load_template("report.html"))
+    return template.safe_substitute(
         repo_name=html.escape(repo_name),
         timestamp_display=timestamp_display,
         hardware_meta=f' | {hardware_display}' if hardware_display else '',
@@ -389,8 +390,8 @@ def generate_root_index(output_dir: Path, repo_name: Optional[str] = None) -> Pa
     """
     title = f"{repo_name} Test Results" if repo_name else "ComfyUI Test Results"
 
-    template = _load_template("root_index.html")
-    html_content = template.format(
+    template = Template(_load_template("root_index.html"))
+    html_content = template.safe_substitute(
         title=html.escape(title),
         platforms_json=json.dumps(PLATFORMS),
     )
@@ -424,8 +425,8 @@ def generate_branch_root_index(output_dir: Path, repo_name: Optional[str] = None
         branches.remove('main')
         branches.insert(0, 'main')
 
-    template = _load_template("branch_index.html")
-    html_content = template.format(
+    template = Template(_load_template("branch_index.html"))
+    html_content = template.safe_substitute(
         title=html.escape(title),
         repo_name=html.escape(repo_name or ''),
         branches_json=json.dumps(branches),

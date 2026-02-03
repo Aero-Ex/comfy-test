@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>{title}</title>
+  <title>$title</title>
   <style>
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; }
@@ -22,7 +22,7 @@
   </style>
 </head>
 <body>
-  <h1>{title}</h1>
+  <h1>$title</h1>
   <div class="legend">
     <span><span class="dot available"></span> Results available</span>
     <span><span class="dot unavailable"></span> No results yet</span>
@@ -30,7 +30,7 @@
   <div class="tabs" id="tabs"></div>
   <iframe id="frame" src="about:blank"></iframe>
   <script>
-    const platforms = {platforms_json};
+    const platforms = $platforms_json;
     const tabs = document.getElementById('tabs');
     const frame = document.getElementById('frame');
     let activeTab = null;

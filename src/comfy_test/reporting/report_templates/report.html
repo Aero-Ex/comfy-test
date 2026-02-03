@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{repo_name} - Test Results</title>
+    <title>$repo_name - Test Results</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -67,7 +67,7 @@
         }
 
         .progress-fill.has-failures {
-            background: linear-gradient(90deg, #00c853 0%, #00c853 {pass_rate}%, #ff5252 {pass_rate}%, #ff5252 100%);
+            background: linear-gradient(90deg, #00c853 0%, #00c853 $pass_rate%, #ff5252 $pass_rate%, #ff5252 100%);
             width: 100% !important;
         }
 
@@ -570,27 +570,27 @@
 </head>
 <body>
     <header>
-        <h1><a href="https://github.com/PozzettiAndrea/{repo_name}">{repo_name}</a> Test Results</h1>
-        <p class="meta">{timestamp_display}{hardware_meta}</p>
+        <h1><a href="https://github.com/PozzettiAndrea/$repo_name">$repo_name</a> Test Results</h1>
+        <p class="meta">$timestamp_display$hardware_meta</p>
     </header>
 
     <div class="container">
         <div class="summary">
             <div class="progress-bar">
-                <div class="progress-fill{progress_class}" style="width: {pass_rate}%"></div>
+                <div class="progress-fill$progress_class" style="width: $pass_rate%"></div>
             </div>
             <div class="stats">
-                <span class="stat-badge stat-pass">{passed} PASSED</span>
-                {failed_badge}
-                <span class="stat-total">{passed}/{total} tests ({pass_rate_display}%)</span>
+                <span class="stat-badge stat-pass">$passed PASSED</span>
+                $failed_badge
+                <span class="stat-total">$passed/$total tests ($pass_rate_display%)</span>
             </div>
         </div>
 
-        {failed_section}
+        $failed_section
 
         <h2 class="section-title">All Workflows</h2>
         <div class="workflow-grid">
-            {workflow_cards}
+            $workflow_cards
         </div>
     </div>
 
@@ -634,8 +634,8 @@
     </footer>
 
     <script>
-        const workflowData = {workflow_data_js};
-        const videoData = {video_data_js};
+        const workflowData = $workflow_data_js;
+        const videoData = $video_data_js;
 
         let currentWorkflow = null;
         let playInterval = null;
