@@ -81,10 +81,15 @@ def cmd_run(args) -> int:
                 return 1
             platform = "windows_portable"
 
-        # Build output path: logs_dir/NodeName-XXXX/branch/platform
-        # For now just: logs_dir/NodeName-XXXX/platform
+        # Build output path: logs_dir/NodeName-XXXX/branch/platform-gpu
         run_id = f"{short_name}-{timestamp}"
-        output_dir = logs_dir / run_id / platform
+        branch = getattr(args, 'branch', None)
+        gpu_suffix = "gpu" if args.gpu else "cpu"
+        platform_dir = f"{platform}-{gpu_suffix}"
+        if branch:
+            output_dir = logs_dir / run_id / branch / platform_dir
+        else:
+            output_dir = logs_dir / run_id / platform_dir
         output_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"[comfy-test] Output: {output_dir}")
@@ -190,5 +195,9 @@ def add_run_parser(subparsers):
         "--deps-installed",
         action="store_true",
         help="Skip requirements.txt and install.py (deps already installed)",
+    )
+    run_parser.add_argument(
+        "--branch", "-b",
+        help="Git branch name (adds branch folder to output path)",
     )
     run_parser.set_defaults(func=cmd_run)
