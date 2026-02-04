@@ -1,0 +1,118 @@
+# Windows GPU test workflow (self-hosted) - called by test-matrix.yml
+name: Test Windows GPU
+
+on:
+  workflow_call:
+    inputs:
+      config-file:
+        type: string
+        default: "comfy-test.toml"
+      timeout-minutes:
+        type: number
+        default: 60
+
+jobs:
+  windows-gpu-test:
+    name: windows-gpu-test
+    runs-on: ["self-hosted", "windows", "gpu"]
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      COMFY_TEST_GPU: "1"
+      COMFY_TEST_LOGS_DIR: ${{ github.workspace }}\comfy-test-logs
+      COMFY_TEST_WORKSPACE_DIR: ${{ github.workspace }}\test_workspaces
+      NODE_NAME: ${{ github.event.repository.name }}
+      COMFYUI_DIR: ${{ github.workspace }}\ComfyUI
+      TOOLS_VENV: ${{ github.workspace }}\.tools-venv
+      COMFY_VENV: ${{ github.workspace }}\.comfy-venv
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\.playwright
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}\.python
+      UV_CACHE_DIR: ${{ github.workspace }}\.uv-cache
+      LOCAL_CACHE_DIR: ${{ runner.tool_cache }}\comfy-test-cache\windows-gpu-v1
+    steps:
+      - uses: astral-sh/setup-uv@v4
+
+      # --- Restore local cache ---
+      - name: Restore local cache
+        id: local-cache
+        shell: powershell
+        run: |
+          if (Test-Path "$env:LOCAL_CACHE_DIR") {
+            Write-Host "Restoring from local cache..."
+            robocopy "$env:LOCAL_CACHE_DIR\tools-venv" "$env:TOOLS_VENV" /E /MT /NFL /NDL /NJH /NJS
+            robocopy "$env:LOCAL_CACHE_DIR\playwright" "$env:PLAYWRIGHT_BROWSERS_PATH" /E /MT /NFL /NDL /NJH /NJS
+            robocopy "$env:LOCAL_CACHE_DIR\ComfyUI" "$env:COMFYUI_DIR" /E /MT /NFL /NDL /NJH /NJS
+            robocopy "$env:LOCAL_CACHE_DIR\comfy-venv" "$env:COMFY_VENV" /E /MT /NFL /NDL /NJH /NJS
+            robocopy "$env:LOCAL_CACHE_DIR\python" "$env:UV_PYTHON_INSTALL_DIR" /E /MT /NFL /NDL /NJH /NJS
+            Write-Host "Cache restored!"
+            echo "cache-hit=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "No local cache found"
+            echo "cache-hit=false" >> $env:GITHUB_OUTPUT
+          }
+
+      # --- Setup (skip if cache hit) ---
+      - name: Setup environment
+        if: steps.local-cache.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          uv python install 3.13
+          uv venv $env:TOOLS_VENV --python 3.13
+          uv pip install --python "$env:TOOLS_VENV" playwright
+          git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git $env:COMFYUI_DIR
+          uv venv $env:COMFY_VENV --python 3.13
+          uv pip install --python $env:COMFY_VENV -r "$env:COMFYUI_DIR\requirements.txt"
+          & "$env:TOOLS_VENV\Scripts\playwright" install chromium
+
+      # --- Save local cache immediately after setup ---
+      - name: Save local cache
+        if: steps.local-cache.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          Write-Host "Saving to local cache..."
+          New-Item -ItemType Directory -Force -Path "$env:LOCAL_CACHE_DIR" | Out-Null
+          robocopy "$env:TOOLS_VENV" "$env:LOCAL_CACHE_DIR\tools-venv" /E /MT /NFL /NDL /NJH /NJS
+          robocopy "$env:PLAYWRIGHT_BROWSERS_PATH" "$env:LOCAL_CACHE_DIR\playwright" /E /MT /NFL /NDL /NJH /NJS
+          robocopy "$env:COMFYUI_DIR" "$env:LOCAL_CACHE_DIR\ComfyUI" /E /MT /NFL /NDL /NJH /NJS
+          robocopy "$env:COMFY_VENV" "$env:LOCAL_CACHE_DIR\comfy-venv" /E /MT /NFL /NDL /NJH /NJS
+          robocopy "$env:UV_PYTHON_INSTALL_DIR" "$env:LOCAL_CACHE_DIR\python" /E /MT /NFL /NDL /NJH /NJS
+          Write-Host "Cache saved!"
+
+      # --- Install comfy-test (fresh) ---
+      - name: Install comfy-test
+        shell: powershell
+        run: uv pip install --python "$env:COMFY_VENV" comfy-test
+
+      # --- Checkout and run ---
+      - uses: actions/checkout@v4
+        with:
+          path: ${{ env.COMFYUI_DIR }}\custom_nodes\${{ github.event.repository.name }}
+
+      - name: Install node dependencies
+        shell: powershell
+        working-directory: ${{ env.COMFYUI_DIR }}\custom_nodes\${{ env.NODE_NAME }}
+        run: |
+          & "$env:COMFY_VENV\Scripts\Activate.ps1"
+          if (Test-Path "requirements.txt") { uv pip install -r requirements.txt }
+          if (Test-Path "install.py") { python install.py }
+
+      - name: Run tests
+        shell: powershell
+        working-directory: ${{ env.COMFYUI_DIR }}\custom_nodes\${{ env.NODE_NAME }}
+        run: & "$env:COMFY_VENV\Scripts\comfy-test" run --comfyui-dir "$env:COMFYUI_DIR" --deps-installed
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: results-windows-gpu
+          path: ${{ env.COMFY_TEST_LOGS_DIR }}/
+          if-no-files-found: ignore
+          include-hidden-files: true
+
+      # --- Cleanup (no trace on self-hosted) ---
+      - name: Cleanup workspace
+        if: always()
+        shell: powershell
+        run: |
+          Remove-Item -Path "$env:GITHUB_WORKSPACE\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "$env:GITHUB_WORKSPACE\.*" -Recurse -Force -ErrorAction SilentlyContinue

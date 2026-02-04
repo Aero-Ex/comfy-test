@@ -68,7 +68,6 @@ jobs:
     with:
       config-file: ${{ inputs.config-file }}
       timeout-minutes: ${{ inputs.timeout-minutes }}
-      gpu: false
 
   macos-cpu:
     needs: setup
@@ -86,7 +85,6 @@ jobs:
     with:
       config-file: ${{ inputs.config-file }}
       timeout-minutes: ${{ inputs.timeout-minutes }}
-      gpu: false
 
   windows-portable-cpu:
     needs: setup
@@ -95,7 +93,6 @@ jobs:
     with:
       config-file: ${{ inputs.config-file }}
       timeout-minutes: ${{ inputs.timeout-minutes }}
-      gpu: false
 
   # ---------------------------------------------------------------------------
   # GPU tests (self-hosted runners) - only if gpu workflows defined
@@ -103,11 +100,10 @@ jobs:
   linux-gpu:
     needs: setup
     if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-linux == 'true'
-    uses: ./.github/workflows/_test-linux.yml
+    uses: ./.github/workflows/_test-linux-gpu.yml
     with:
       config-file: ${{ inputs.config-file }}
       timeout-minutes: ${{ inputs.timeout-minutes }}
-      gpu: true
 
   macos-gpu:
     needs: setup
@@ -121,20 +117,18 @@ jobs:
   windows-gpu:
     needs: setup
     if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-windows == 'true'
-    uses: ./.github/workflows/_test-windows.yml
+    uses: ./.github/workflows/_test-windows-gpu.yml
     with:
       config-file: ${{ inputs.config-file }}
       timeout-minutes: ${{ inputs.timeout-minutes }}
-      gpu: true
 
   windows-portable-gpu:
     needs: setup
     if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-windows-portable == 'true'
-    uses: ./.github/workflows/_test-windows-portable.yml
+    uses: ./.github/workflows/_test-windows-portable-gpu.yml
     with:
       config-file: ${{ inputs.config-file }}
       timeout-minutes: ${{ inputs.timeout-minutes }}
-      gpu: true
 
   # ---------------------------------------------------------------------------
   # Publish results

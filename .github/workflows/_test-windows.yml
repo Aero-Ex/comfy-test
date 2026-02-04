@@ -1,4 +1,4 @@
-# Windows test workflow - called by test-matrix.yml
+# Windows CPU test workflow (hosted) - called by test-matrix.yml
 name: Test Windows
 
 on:
@@ -10,18 +10,14 @@ on:
       timeout-minutes:
         type: number
         default: 60
-      gpu:
-        type: boolean
-        default: false
 
 jobs:
   windows-test:
-    name: windows-test${{ inputs.gpu && '-gpu' || '' }}
-    runs-on: ${{ inputs.gpu && fromJSON('["self-hosted", "windows", "gpu"]') || 'windows-latest' }}
+    name: windows-test
+    runs-on: windows-latest
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
       PYTHONUNBUFFERED: "1"
-      COMFY_TEST_GPU: ${{ inputs.gpu && '1' || '' }}
       COMFY_TEST_LOGS_DIR: ${{ github.workspace }}\comfy-test-logs
       COMFY_TEST_WORKSPACE_DIR: ${{ github.workspace }}\test_workspaces
       NODE_NAME: ${{ github.event.repository.name }}
@@ -32,26 +28,10 @@ jobs:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}\.python
       UV_CACHE_DIR: ${{ github.workspace }}\.uv-cache
     steps:
-      # --- Install uv (manages Python) and pixi (for CUDA deps) ---
       - uses: astral-sh/setup-uv@v4
 
-      # --- Local cache for self-hosted (instant, no download) ---
-      - name: Local cache (self-hosted)
-        if: ${{ inputs.gpu }}
-        id: local-cache
-        uses: MasterworksIO/action-local-cache@2
-        with:
-          path: |
-            ${{ env.TOOLS_VENV }}
-            ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-            ${{ env.COMFYUI_DIR }}
-            ${{ env.COMFY_VENV }}
-            ${{ env.UV_PYTHON_INSTALL_DIR }}
-          key: setup-windows-gpu-v1
-
-      # --- GitHub cache for hosted runners ---
-      - name: GitHub cache (hosted)
-        if: ${{ !inputs.gpu }}
+      # --- GitHub cache ---
+      - name: GitHub cache
         id: github-cache
         uses: actions/cache@v4
         with:
@@ -61,35 +41,25 @@ jobs:
             ${{ env.COMFYUI_DIR }}
             ${{ env.COMFY_VENV }}
             ${{ env.UV_PYTHON_INSTALL_DIR }}
-          key: setup-${{ runner.os }}-hosted-uv-v1
+          key: setup-windows-hosted-uv-v1
 
-      # --- Setup (skip if either cache hit) ---
+      # --- Setup (skip if cache hit) ---
       - name: Setup environment
-        if: steps.local-cache.outputs.cache-hit != 'true' && steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.github-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: |
-          # Install Python via uv (into workspace)
           uv python install 3.13
-
-          # Create tools venv
           uv venv $env:TOOLS_VENV --python 3.13
           uv pip install --python "$env:TOOLS_VENV" playwright
-
-          # Clone ComfyUI
           git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git $env:COMFYUI_DIR
-
-          # Create ComfyUI venv
           uv venv $env:COMFY_VENV --python 3.13
           uv pip install --python $env:COMFY_VENV -r "$env:COMFYUI_DIR\requirements.txt"
-
-          # Install playwright browsers
           & "$env:TOOLS_VENV\Scripts\playwright" install chromium
 
       # --- Install comfy-test (fresh) ---
       - name: Install comfy-test
         shell: powershell
-        run: |
-          uv pip install --python "$env:COMFY_VENV" comfy-test
+        run: uv pip install --python "$env:COMFY_VENV" comfy-test
 
       # --- Checkout and run ---
       - uses: actions/checkout@v4
@@ -101,31 +71,18 @@ jobs:
         working-directory: ${{ env.COMFYUI_DIR }}\custom_nodes\${{ env.NODE_NAME }}
         run: |
           & "$env:COMFY_VENV\Scripts\Activate.ps1"
-          if (Test-Path "requirements.txt") {
-            uv pip install -r requirements.txt
-          }
-          if (Test-Path "install.py") {
-            python install.py
-          }
+          if (Test-Path "requirements.txt") { uv pip install -r requirements.txt }
+          if (Test-Path "install.py") { python install.py }
 
       - name: Run tests
         shell: powershell
         working-directory: ${{ env.COMFYUI_DIR }}\custom_nodes\${{ env.NODE_NAME }}
-        run: |
-          & "$env:COMFY_VENV\Scripts\comfy-test" run --comfyui-dir "$env:COMFYUI_DIR" --deps-installed
+        run: & "$env:COMFY_VENV\Scripts\comfy-test" run --comfyui-dir "$env:COMFYUI_DIR" --deps-installed
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: results-windows-${{ inputs.gpu && 'gpu' || 'cpu' }}
+          name: results-windows-cpu
           path: ${{ env.COMFY_TEST_LOGS_DIR }}/
           if-no-files-found: ignore
           include-hidden-files: true
-
-      # --- Cleanup (no trace on self-hosted) ---
-      - name: Cleanup workspace
-        if: always()
-        shell: powershell
-        run: |
-          Remove-Item -Path "$env:GITHUB_WORKSPACE\*" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "$env:GITHUB_WORKSPACE\.*" -Recurse -Force -ErrorAction SilentlyContinue

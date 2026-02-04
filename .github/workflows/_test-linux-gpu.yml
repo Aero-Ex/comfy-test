@@ -1,5 +1,5 @@
-# Linux CPU test workflow (hosted) - called by test-matrix.yml
-name: Test Linux
+# Linux GPU test workflow (self-hosted) - called by test-matrix.yml
+name: Test Linux GPU
 
 on:
   workflow_call:
@@ -12,12 +12,13 @@ on:
         default: 60
 
 jobs:
-  linux-test:
-    name: linux-test
-    runs-on: ubuntu-latest
+  linux-gpu-test:
+    name: linux-gpu-test
+    runs-on: ["self-hosted", "linux", "gpu"]
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
       PYTHONUNBUFFERED: "1"
+      COMFY_TEST_GPU: "1"
       COMFY_TEST_LOGS_DIR: ${{ github.workspace }}/comfy-test-logs
       COMFY_TEST_WORKSPACE_DIR: ${{ github.workspace }}/test_workspaces
       NODE_NAME: ${{ github.event.repository.name }}
@@ -27,31 +28,31 @@ jobs:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.python
       UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache
+      LOCAL_CACHE_DIR: ${{ runner.tool_cache }}/comfy-test-cache/linux-gpu-v1
     steps:
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL &
-          sudo apt-get clean &
-          wait
-
       - uses: astral-sh/setup-uv@v4
 
-      # --- GitHub cache ---
-      - name: GitHub cache
-        id: github-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.TOOLS_VENV }}
-            ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-            ${{ env.COMFYUI_DIR }}
-            ${{ env.COMFY_VENV }}
-            ${{ env.UV_PYTHON_INSTALL_DIR }}
-          key: setup-linux-hosted-uv-v1
+      # --- Restore local cache ---
+      - name: Restore local cache
+        id: local-cache
+        run: |
+          if [ -d "$LOCAL_CACHE_DIR" ]; then
+            echo "Restoring from local cache..."
+            rsync -a "$LOCAL_CACHE_DIR/tools-venv/" "$TOOLS_VENV/"
+            rsync -a "$LOCAL_CACHE_DIR/playwright/" "$PLAYWRIGHT_BROWSERS_PATH/"
+            rsync -a "$LOCAL_CACHE_DIR/ComfyUI/" "$COMFYUI_DIR/"
+            rsync -a "$LOCAL_CACHE_DIR/comfy-venv/" "$COMFY_VENV/"
+            rsync -a "$LOCAL_CACHE_DIR/python/" "$UV_PYTHON_INSTALL_DIR/"
+            echo "Cache restored!"
+            echo "cache-hit=true" >> $GITHUB_OUTPUT
+          else
+            echo "No local cache found"
+            echo "cache-hit=false" >> $GITHUB_OUTPUT
+          fi
 
       # --- Setup (skip if cache hit) ---
       - name: Setup environment
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.local-cache.outputs.cache-hit != 'true'
         run: |
           uv python install 3.13
           uv venv $TOOLS_VENV --python 3.13
@@ -61,6 +62,19 @@ jobs:
           uv pip install --python $COMFY_VENV -r $COMFYUI_DIR/requirements.txt
           $TOOLS_VENV/bin/python -m playwright install chromium
           $TOOLS_VENV/bin/python -m playwright install-deps chromium || true
+
+      # --- Save local cache immediately after setup ---
+      - name: Save local cache
+        if: steps.local-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Saving to local cache..."
+          mkdir -p "$LOCAL_CACHE_DIR"
+          rsync -a "$TOOLS_VENV/" "$LOCAL_CACHE_DIR/tools-venv/"
+          rsync -a "$PLAYWRIGHT_BROWSERS_PATH/" "$LOCAL_CACHE_DIR/playwright/"
+          rsync -a "$COMFYUI_DIR/" "$LOCAL_CACHE_DIR/ComfyUI/"
+          rsync -a "$COMFY_VENV/" "$LOCAL_CACHE_DIR/comfy-venv/"
+          rsync -a "$UV_PYTHON_INSTALL_DIR/" "$LOCAL_CACHE_DIR/python/"
+          echo "Cache saved!"
 
       # --- Install comfy-test (fresh) ---
       - name: Install comfy-test
@@ -84,7 +98,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: results-linux-cpu
+          name: results-linux-gpu
           path: ${{ env.COMFY_TEST_LOGS_DIR }}/
           if-no-files-found: ignore
           include-hidden-files: true
+
+      # --- Cleanup (no trace on self-hosted) ---
+      - name: Cleanup workspace
+        if: always()
+        run: |
+          rm -rf "$GITHUB_WORKSPACE"/* || true
+          rm -rf "$GITHUB_WORKSPACE"/.* 2>/dev/null || true

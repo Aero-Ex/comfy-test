@@ -1,5 +1,5 @@
-# Windows Portable CPU test workflow (hosted) - called by test-matrix.yml
-name: Test Windows Portable
+# Windows Portable GPU test workflow (self-hosted) - called by test-matrix.yml
+name: Test Windows Portable GPU
 
 on:
   workflow_call:
@@ -12,51 +12,70 @@ on:
         default: 60
 
 jobs:
-  windows-portable-test:
-    name: windows-portable-test
-    runs-on: windows-latest
+  windows-portable-gpu-test:
+    name: windows-portable-gpu-test
+    runs-on: ["self-hosted", "windows", "gpu"]
     timeout-minutes: ${{ inputs.timeout-minutes }}
     env:
       PYTHONUNBUFFERED: "1"
+      COMFY_TEST_GPU: "1"
       COMFY_TEST_LOGS_DIR: ${{ github.workspace }}\comfy-test-logs
       COMFY_TEST_WORKSPACE_DIR: ${{ github.workspace }}\test_workspaces
       NODE_NAME: ${{ github.event.repository.name }}
       COMFYUI_DIR: ${{ github.workspace }}\ComfyUI_windows_portable\ComfyUI
       PYTHON_EXE: ${{ github.workspace }}\ComfyUI_windows_portable\python_embeded\python.exe
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\.playwright
+      LOCAL_CACHE_DIR: ${{ runner.tool_cache }}\comfy-test-cache\windows-portable-gpu-v1
     steps:
-      # --- GitHub cache ---
-      - name: GitHub cache
-        id: github-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
-            ${{ github.workspace }}\ComfyUI_windows_portable
-          key: setup-windows-portable-hosted-v1
+      # --- Restore local cache ---
+      - name: Restore local cache
+        id: local-cache
+        shell: powershell
+        run: |
+          if (Test-Path "$env:LOCAL_CACHE_DIR") {
+            Write-Host "Restoring from local cache..."
+            robocopy "$env:LOCAL_CACHE_DIR\playwright" "$env:PLAYWRIGHT_BROWSERS_PATH" /E /MT /NFL /NDL /NJH /NJS
+            robocopy "$env:LOCAL_CACHE_DIR\ComfyUI_windows_portable" "$env:GITHUB_WORKSPACE\ComfyUI_windows_portable" /E /MT /NFL /NDL /NJH /NJS
+            Write-Host "Cache restored!"
+            echo "cache-hit=true" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "No local cache found"
+            echo "cache-hit=false" >> $env:GITHUB_OUTPUT
+          }
 
       # --- Setup (skip if cache hit) ---
       - name: Download portable ComfyUI
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.local-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: curl.exe -L --progress-bar -o portable.7z "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z"
 
       - name: Extract portable ComfyUI
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.local-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: & "C:\Program Files\7-Zip\7z.exe" x portable.7z -y -bsp1
 
       - name: Remove portable archive
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.local-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: Remove-Item portable.7z
 
       - name: Install Playwright browsers
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.local-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           & $env:PYTHON_EXE -m pip install playwright
           & $env:PYTHON_EXE -m playwright install chromium
+
+      # --- Save local cache immediately after setup ---
+      - name: Save local cache
+        if: steps.local-cache.outputs.cache-hit != 'true'
+        shell: powershell
+        run: |
+          Write-Host "Saving to local cache..."
+          New-Item -ItemType Directory -Force -Path "$env:LOCAL_CACHE_DIR" | Out-Null
+          robocopy "$env:PLAYWRIGHT_BROWSERS_PATH" "$env:LOCAL_CACHE_DIR\playwright" /E /MT /NFL /NDL /NJH /NJS
+          robocopy "$env:GITHUB_WORKSPACE\ComfyUI_windows_portable" "$env:LOCAL_CACHE_DIR\ComfyUI_windows_portable" /E /MT /NFL /NDL /NJH /NJS
+          Write-Host "Cache saved!"
 
       # --- Install comfy-test (fresh) ---
       - name: Install comfy-test
@@ -85,8 +104,8 @@ jobs:
         shell: powershell
         working-directory: ${{ github.workspace }}\ComfyUI_windows_portable
         run: |
-          Write-Host "Starting CPU server..."
-          $serverProcess = Start-Process -FilePath $env:PYTHON_EXE -ArgumentList "-s", "ComfyUI\main.py", "--cpu", "--windows-standalone-build" -NoNewWindow -PassThru
+          Write-Host "Starting GPU server..."
+          $serverProcess = Start-Process -FilePath $env:PYTHON_EXE -ArgumentList "-s", "ComfyUI\main.py", "--windows-standalone-build" -NoNewWindow -PassThru
 
           Write-Host "Waiting for server..."
           for ($i = 1; $i -le 120; $i++) {
@@ -107,7 +126,15 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: results-windows-portable-cpu
+          name: results-windows-portable-gpu
           path: ${{ env.COMFY_TEST_LOGS_DIR }}\
           if-no-files-found: ignore
           include-hidden-files: true
+
+      # --- Cleanup (no trace on self-hosted) ---
+      - name: Cleanup workspace
+        if: always()
+        shell: powershell
+        run: |
+          Remove-Item -Path "$env:GITHUB_WORKSPACE\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "$env:GITHUB_WORKSPACE\.*" -Recurse -Force -ErrorAction SilentlyContinue
