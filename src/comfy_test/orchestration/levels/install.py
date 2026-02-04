@@ -115,7 +115,7 @@ def _setup_existing_with_install(
     )
 
     ctx.log("Installing custom node...")
-    platform.install_node(paths, ctx.node_dir)
+    platform.install_node(paths, ctx.node_dir, deps_installed=ctx.deps_installed)
 
     _install_node_dependencies(ctx, platform, paths)
 
@@ -132,7 +132,7 @@ def _setup_full(
     paths = platform.setup_comfyui(ctx.config, work_path)
 
     ctx.log("Installing custom node...")
-    platform.install_node(paths, ctx.node_dir)
+    platform.install_node(paths, ctx.node_dir, deps_installed=ctx.deps_installed)
 
     _install_node_dependencies(ctx, platform, paths)
 

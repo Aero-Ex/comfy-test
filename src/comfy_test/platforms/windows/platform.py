@@ -244,15 +244,15 @@ class WindowsPlatform(TestPlatform):
             custom_nodes_dir=custom_nodes_dir,
         )
 
-    def install_node(self, paths: TestPaths, node_dir: Path) -> None:
+    def install_node(self, paths: TestPaths, node_dir: Path, deps_installed: bool = False) -> None:
         """
         Install custom node into ComfyUI.
 
         On Windows, we copy instead of symlink to avoid permission issues.
 
         1. Copy to custom_nodes/ (respecting .gitignore)
-        2. Install requirements.txt if present (with local wheels)
-        3. Run install.py if present (with COMFY_LOCAL_WHEELS env var)
+        2. Install requirements.txt if present (with local wheels) - unless deps_installed
+        3. Run install.py if present (with COMFY_LOCAL_WHEELS env var) - unless deps_installed
         """
         node_dir = Path(node_dir).resolve()
         node_name = node_dir.name
@@ -265,6 +265,10 @@ class WindowsPlatform(TestPlatform):
             shutil.rmtree(target_dir)
 
         shutil.copytree(node_dir, target_dir, ignore=_gitignore_filter(node_dir, paths.work_dir))
+
+        if deps_installed:
+            self._log("Skipping requirements.txt and install.py (--deps-installed)")
+            return
 
         # Install requirements.txt first (install.py may depend on these)
         # Uses pip (not uv) to match user experience

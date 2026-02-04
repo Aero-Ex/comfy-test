@@ -105,7 +105,7 @@ jobs:
 
       - name: Run tests
         working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
-        run: $COMFY_VENV/bin/comfy-test run
+        run: $COMFY_VENV/bin/comfy-test run --comfyui-dir "$COMFYUI_DIR" --deps-installed
 
       - uses: actions/upload-artifact@v4
         if: always()

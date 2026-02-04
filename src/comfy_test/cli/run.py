@@ -98,6 +98,8 @@ def cmd_run(args) -> int:
         workflow_filter = getattr(args, 'workflow', None)
 
         server_url = getattr(args, 'server_url', None)
+        comfyui_dir = Path(args.comfyui_dir) if getattr(args, 'comfyui_dir', None) else None
+        deps_installed = getattr(args, 'deps_installed', False)
 
         results = [manager.run_platform(
             platform,
@@ -106,6 +108,8 @@ def cmd_run(args) -> int:
             workflow_filter,
             work_dir=work_dir,
             server_url=server_url,
+            comfyui_dir=comfyui_dir,
+            deps_installed=deps_installed,
         )]
 
         # Report results
@@ -177,5 +181,14 @@ def add_run_parser(subparsers):
     run_parser.add_argument(
         "--server-url",
         help="Connect to existing ComfyUI server instead of starting one",
+    )
+    run_parser.add_argument(
+        "--comfyui-dir",
+        help="Use existing ComfyUI directory instead of cloning",
+    )
+    run_parser.add_argument(
+        "--deps-installed",
+        action="store_true",
+        help="Skip requirements.txt and install.py (deps already installed)",
     )
     run_parser.set_defaults(func=cmd_run)

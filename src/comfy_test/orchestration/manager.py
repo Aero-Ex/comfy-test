@@ -140,6 +140,7 @@ class TestManager:
         workflow_filter: Optional[str] = None,
         comfyui_dir: Optional[Path] = None,
         server_url: Optional[str] = None,
+        deps_installed: bool = False,
     ) -> List[TestResult]:
         """Run tests on all enabled platforms.
 
@@ -149,6 +150,7 @@ class TestManager:
             workflow_filter: If specified, only run this workflow
             comfyui_dir: Use existing ComfyUI directory
             server_url: If provided, connect to existing server
+            deps_installed: If True, skip requirements.txt and install.py
 
         Returns:
             List of TestResult for each platform
@@ -170,7 +172,8 @@ class TestManager:
             result = self.run_platform(
                 platform_name, dry_run, level, workflow_filter,
                 comfyui_dir=comfyui_dir,
-                server_url=server_url
+                server_url=server_url,
+                deps_installed=deps_installed,
             )
             results.append(result)
 
@@ -185,6 +188,7 @@ class TestManager:
         comfyui_dir: Optional[Path] = None,
         server_url: Optional[str] = None,
         work_dir: Optional[Path] = None,
+        deps_installed: bool = False,
     ) -> TestResult:
         """Run tests on a specific platform.
 
@@ -196,6 +200,7 @@ class TestManager:
             comfyui_dir: Use existing ComfyUI directory
             server_url: If provided, connect to existing server
             work_dir: Use this directory for work
+            deps_installed: If True, skip requirements.txt and install.py
 
         Returns:
             TestResult for the platform
@@ -275,6 +280,7 @@ class TestManager:
             server_url=server_url,
             workflow_filter=workflow_filter,
             paths=inferred_paths,
+            deps_installed=deps_installed,
         )
 
         try:

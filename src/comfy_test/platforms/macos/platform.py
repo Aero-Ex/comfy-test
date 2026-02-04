@@ -115,13 +115,13 @@ class MacOSPlatform(TestPlatform):
             custom_nodes_dir=custom_nodes_dir,
         )
 
-    def install_node(self, paths: TestPaths, node_dir: Path) -> None:
+    def install_node(self, paths: TestPaths, node_dir: Path, deps_installed: bool = False) -> None:
         """
         Install custom node into ComfyUI.
 
         1. Symlink to custom_nodes/
-        2. Install requirements.txt if present
-        3. Run install.py if present
+        2. Install requirements.txt if present - unless deps_installed
+        3. Run install.py if present - unless deps_installed
         """
         node_dir = Path(node_dir).resolve()
         node_name = node_dir.name
@@ -137,6 +137,10 @@ class MacOSPlatform(TestPlatform):
                 shutil.rmtree(target_dir)
 
         target_dir.symlink_to(node_dir)
+
+        if deps_installed:
+            self._log("Skipping requirements.txt and install.py (--deps-installed)")
+            return
 
         # Install requirements.txt first
         requirements_file = node_dir / "requirements.txt"

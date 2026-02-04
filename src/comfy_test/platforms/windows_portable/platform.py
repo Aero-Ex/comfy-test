@@ -247,7 +247,7 @@ class WindowsPortablePlatform(TestPlatform):
             custom_nodes_dir=custom_nodes_dir,
         )
 
-    def install_node(self, paths: TestPaths, node_dir: Path) -> None:
+    def install_node(self, paths: TestPaths, node_dir: Path, deps_installed: bool = False) -> None:
         """Install custom node into ComfyUI Portable."""
         node_dir = Path(node_dir).resolve()
         node_name = node_dir.name
@@ -258,6 +258,10 @@ class WindowsPortablePlatform(TestPlatform):
             shutil.rmtree(target_dir)
 
         shutil.copytree(node_dir, target_dir, ignore=_gitignore_filter(node_dir, paths.work_dir))
+
+        if deps_installed:
+            self._log("Skipping requirements.txt and install.py (--deps-installed)")
+            return
 
         # Build local dev wheels
         wheel_dir = _build_local_wheels(paths.work_dir, self._log)
