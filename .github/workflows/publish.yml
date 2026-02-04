@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch:
 
 jobs:
@@ -19,16 +19,25 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check for non-ASCII characters
+      - name: Check Windows compatibility (ASCII-only)
         run: |
-          # Check for non-ASCII (bytes > 127) which break Windows cp1252 encoding
-          if LC_ALL=C grep -rPn '[\x80-\xFF]' --include="*.py" . 2>/dev/null | grep -v '^\./\.'; then
-            echo "::error::Found non-ASCII characters in Python files. Use ASCII only for Windows cp1252 compatibility."
-            exit 1
-          fi
-          echo "No problematic characters found."
+          python3 << 'EOF'
+          import pathlib, sys
+          errors = []
+          for f in pathlib.Path('.').rglob('*'):
+              if not f.is_file() or '.git' in f.parts: continue
+              try:
+                  f.read_bytes().decode('ascii')
+              except UnicodeDecodeError as e:
+                  errors.append(f"{f}: non-ASCII byte {hex(e.object[e.start])} at position {e.start}")
+              except Exception:
+                  pass
+          if errors:
+              print("Files with non-ASCII characters (may break on Windows):")
+              for e in errors: print(f"  {e}")
+              sys.exit(1)
+          EOF
 
-      # Everything below only runs on push to main (not PRs)
       - name: Setup Python
         if: github.event_name == 'push'
         uses: actions/setup-python@v5
