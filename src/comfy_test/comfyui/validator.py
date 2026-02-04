@@ -3,7 +3,7 @@
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -12,7 +12,7 @@ class ValidationError:
     node_id: int
     node_type: str
     message: str
-    level: str  # "schema", "graph", "introspection", "execution"
+    level: str  # "schema", "graph", "introspection"
 
     def __str__(self) -> str:
         return f"[{self.level}] Node {self.node_id} ({self.node_type}): {self.message}"
@@ -23,40 +23,27 @@ class ValidationResult:
     """Result of workflow validation."""
     errors: List[ValidationError] = field(default_factory=list)
     warnings: List[ValidationError] = field(default_factory=list)
-    executable_nodes: List[int] = field(default_factory=list)
-    executed_nodes: List[int] = field(default_factory=list)
-    execution_errors: Dict[int, str] = field(default_factory=dict)
 
     @property
     def is_valid(self) -> bool:
         return len(self.errors) == 0
 
 
-class WorkflowValidator:
+class WorkflowValidation:
     """Validates ComfyUI workflows against node schemas.
 
-    Implements 4 levels of validation:
+    Implements 3 levels of validation:
     - Level 1: Schema validation (widget values match allowed types/enums/ranges)
-    - Level 2: Graph validation (connections are valid, no cycles)
+    - Level 2: Graph validation (connections are valid, all nodes exist)
     - Level 3: Node introspection (INPUT_TYPES, RETURN_TYPES are valid)
-    - Level 4: Partial execution (identify nodes that can run without CUDA)
     """
 
-    def __init__(
-        self,
-        object_info: Dict[str, Any],
-        cuda_packages: Optional[List[str]] = None,
-        cuda_node_types: Optional[Set[str]] = None,
-    ):
+    def __init__(self, object_info: Dict[str, Any]):
         """
         Args:
             object_info: Node definitions from /object_info API
-            cuda_packages: List of CUDA package names (for Level 4)
-            cuda_node_types: Set of node types that require CUDA (for Level 4)
         """
         self.object_info = object_info
-        self.cuda_packages = cuda_packages or []
-        self.cuda_node_types = cuda_node_types or set()
 
     def validate(self, workflow: Dict[str, Any]) -> ValidationResult:
         """Run all validation levels on a workflow.
@@ -65,7 +52,7 @@ class WorkflowValidator:
             workflow: Parsed workflow JSON
 
         Returns:
-            ValidationResult with errors, warnings, and executable nodes
+            ValidationResult with errors and warnings
         """
         result = ValidationResult()
 
@@ -77,10 +64,6 @@ class WorkflowValidator:
 
         # Level 3: Node introspection
         result.errors.extend(self._validate_introspection(workflow))
-
-        # Level 4: Find executable prefix (nodes before CUDA)
-        if not result.errors:
-            result.executable_nodes = self._get_executable_prefix(workflow)
 
         return result
 
@@ -178,14 +161,17 @@ class WorkflowValidator:
 
         Returns error message if invalid, None if valid.
         """
+        # Get options dict (second element of spec, if present)
+        opts = input_spec[1] if len(input_spec) > 1 and isinstance(input_spec[1], dict) else {}
+
         # Enum validation - input_type is a list of allowed values
         if isinstance(input_type, list):
+            # Skip validation for file-based inputs (dynamic content)
+            if opts.get("image_upload") or opts.get("file_upload"):
+                return None
             if value not in input_type:
                 return f"'{input_name}': '{value}' not in allowed values {input_type}"
             return None
-
-        # Get options dict (second element of spec, if present)
-        opts = input_spec[1] if len(input_spec) > 1 and isinstance(input_spec[1], dict) else {}
 
         # INT validation
         if input_type == "INT":
@@ -395,222 +381,3 @@ class WorkflowValidator:
                 ))
 
         return errors
-
-    def _get_executable_prefix(self, workflow: Dict[str, Any]) -> List[int]:
-        """Level 4: Get node IDs that can execute without CUDA.
-
-        Returns nodes that:
-        1. Don't require CUDA themselves
-        2. Don't depend on any CUDA node's output
-        """
-        nodes = workflow.get("nodes", [])
-        links = workflow.get("links", [])
-
-        # Build dependency graph
-        nodes_by_id = {n.get("id"): n for n in nodes}
-        dependencies = {n.get("id"): set() for n in nodes}
-
-        for link in links:
-            if not isinstance(link, list) or len(link) < 6:
-                continue
-            _, from_node, _, to_node, _, _ = link[:6]
-            if to_node in dependencies:
-                dependencies[to_node].add(from_node)
-
-        # Find CUDA nodes
-        cuda_nodes = set()
-        for node in nodes:
-            node_type = node.get("type", "")
-            if node_type in self.cuda_node_types:
-                cuda_nodes.add(node.get("id"))
-
-        # Find all nodes that depend on CUDA nodes (transitive)
-        def depends_on_cuda(node_id: int, visited: Set[int] = None) -> bool:
-            if visited is None:
-                visited = set()
-            if node_id in visited:
-                return False
-            visited.add(node_id)
-
-            if node_id in cuda_nodes:
-                return True
-
-            for dep_id in dependencies.get(node_id, []):
-                if depends_on_cuda(dep_id, visited):
-                    return True
-
-            return False
-
-        # Return nodes that don't depend on CUDA
-        executable = []
-        for node in nodes:
-            node_id = node.get("id")
-            if not depends_on_cuda(node_id):
-                executable.append(node_id)
-
-        return executable
-
-    def execute_prefix(
-        self,
-        workflow: Dict[str, Any],
-        api: Any,  # ComfyUIAPI
-        timeout: int = 3600,
-    ) -> ValidationResult:
-        """Level 4: Execute the non-CUDA prefix of a workflow.
-
-        This method attempts to execute all nodes that don't require CUDA
-        and don't depend on CUDA node outputs.
-
-        Args:
-            workflow: Parsed workflow JSON (litegraph format)
-            api: ComfyUIAPI instance for executing the workflow
-            timeout: Execution timeout in seconds
-
-        Returns:
-            ValidationResult with executed_nodes and execution_errors
-        """
-        import time
-
-        result = ValidationResult()
-        result.executable_nodes = self._get_executable_prefix(workflow)
-
-        if not result.executable_nodes:
-            return result
-
-        # Convert litegraph workflow to API format (prompt)
-        prompt = self._workflow_to_prompt(workflow, result.executable_nodes)
-
-        if not prompt:
-            return result
-
-        try:
-            # Queue the partial workflow
-            prompt_id = api.queue_prompt(prompt)
-
-            # Wait for execution to complete
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                history = api.get_history(prompt_id)
-                if history:
-                    status = history.get("status", {})
-                    if status.get("completed", False):
-                        # Check for execution errors
-                        outputs = history.get("outputs", {})
-                        for node_id_str, output in outputs.items():
-                            node_id = int(node_id_str)
-                            if "error" in output:
-                                result.execution_errors[node_id] = output["error"]
-                            else:
-                                result.executed_nodes.append(node_id)
-                        break
-                    elif status.get("status_str") == "error":
-                        # Workflow execution failed
-                        messages = status.get("messages", [])
-                        for msg in messages:
-                            if isinstance(msg, list) and len(msg) >= 2:
-                                msg_type, msg_data = msg[0], msg[1]
-                                if msg_type == "execution_error":
-                                    node_id = msg_data.get("node_id", 0)
-                                    error = msg_data.get("exception_message", "Unknown error")
-                                    result.execution_errors[node_id] = error
-                        break
-                time.sleep(0.5)
-            else:
-                # Timeout
-                result.warnings.append(ValidationError(
-                    0, "workflow",
-                    f"Partial execution timed out after {timeout}s",
-                    "execution"
-                ))
-
-        except Exception as e:
-            result.warnings.append(ValidationError(
-                0, "workflow",
-                f"Partial execution failed: {str(e)}",
-                "execution"
-            ))
-
-        return result
-
-    def _workflow_to_prompt(
-        self,
-        workflow: Dict[str, Any],
-        node_ids: List[int]
-    ) -> Dict[str, Any]:
-        """Convert litegraph workflow format to ComfyUI prompt format.
-
-        Args:
-            workflow: Litegraph format workflow
-            node_ids: List of node IDs to include
-
-        Returns:
-            ComfyUI prompt format (dict of node_id -> node_config)
-        """
-        prompt = {}
-        nodes = workflow.get("nodes", [])
-        links = workflow.get("links", [])
-
-        # Build link lookup: link_id -> (from_node, from_slot, to_node, to_slot, type)
-        link_map = {}
-        for link in links:
-            if isinstance(link, list) and len(link) >= 6:
-                link_id = link[0]
-                link_map[link_id] = link[1:6]
-
-        # Build node lookup
-        nodes_by_id = {n.get("id"): n for n in nodes}
-        node_ids_set = set(node_ids)
-
-        for node_id in node_ids:
-            node = nodes_by_id.get(node_id)
-            if not node:
-                continue
-
-            node_type = node.get("type", "")
-            if node_type not in self.object_info:
-                continue
-
-            schema = self.object_info[node_type]
-            inputs_def = schema.get("input", {})
-            required = inputs_def.get("required", {})
-            optional = inputs_def.get("optional", {})
-            all_inputs = {**required, **optional}
-
-            # Build inputs dict for this node
-            node_inputs = {}
-            widgets_values = node.get("widgets_values", [])
-            widget_idx = 0
-
-            # Get node's input links
-            node_input_links = node.get("inputs", [])
-
-            for input_name, input_spec in all_inputs.items():
-                if not isinstance(input_spec, (list, tuple)) or len(input_spec) < 1:
-                    continue
-
-                input_type = input_spec[0]
-
-                # Check if this is a connection type (uppercase, but not widget types)
-                if isinstance(input_type, str) and input_type.isupper() and input_type not in self.WIDGET_TYPES:
-                    # Find the link for this input
-                    for inp in node_input_links:
-                        if inp.get("name") == input_name:
-                            link_id = inp.get("link")
-                            if link_id and link_id in link_map:
-                                from_node, from_slot, _, _, _ = link_map[link_id]
-                                # Only include if source is in our subset
-                                if from_node in node_ids_set:
-                                    node_inputs[input_name] = [str(from_node), from_slot]
-                            break
-                else:
-                    # Widget value
-                    if widget_idx < len(widgets_values):
-                        node_inputs[input_name] = widgets_values[widget_idx]
-                        widget_idx += 1
-
-            prompt[str(node_id)] = {
-                "class_type": node_type,
-                "inputs": node_inputs,
-            }
-
-        return prompt

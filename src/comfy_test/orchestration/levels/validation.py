@@ -1,22 +1,23 @@
-"""VALIDATION level - Validate workflows via 4-level validation."""
+"""VALIDATION level - Validate workflows via 3-level validation."""
 
+import json
 from pathlib import Path
 
 from ...common.errors import TestError
+from ...comfyui.validator import WorkflowValidation
 from ..context import LevelContext
 
 
 def run(ctx: LevelContext) -> LevelContext:
     """Run VALIDATION level.
 
-    Runs 4-level workflow validation on all configured workflows:
+    Runs 3-level workflow validation on all configured workflows:
     1. Schema - Widget values match allowed enums/types/ranges
     2. Graph - Connections are valid, all nodes exist
     3. Introspection - Node definitions are well-formed
-    4. Partial Execution - Run non-CUDA nodes to verify they work
 
     Args:
-        ctx: Level context (must have server set)
+        ctx: Level context (must have api set)
 
     Returns:
         Unchanged context
@@ -30,44 +31,55 @@ def run(ctx: LevelContext) -> LevelContext:
         ctx.log("No workflows to validate")
         return ctx
 
+    if not ctx.api:
+        raise TestError("VALIDATION level requires API (run REGISTRATION first)")
+
     total_workflows = len(workflows)
     ctx.log(f"Validating {total_workflows} workflow(s)...")
 
-    try:
-        from ...reporting.screenshot import (
-            WorkflowScreenshot,
-            check_dependencies,
-            ensure_dependencies,
-        )
+    # Get object_info from server
+    object_info = ctx.api.get_object_info()
+    validator = WorkflowValidation(object_info)
 
-        # Auto-install playwright if missing
-        if not ensure_dependencies(log_callback=ctx.log):
-            raise ImportError("Failed to install screenshot dependencies")
-        check_dependencies()
+    validation_errors = []
+    for idx, workflow_file in enumerate(workflows, 1):
+        workflow_path = _resolve_workflow_path(ctx, workflow_file)
+        ctx.log(f"  [{idx}/{total_workflows}] Validating {workflow_file.name}")
 
-        ws = WorkflowScreenshot(ctx.server.base_url, log_callback=ctx.log)
-        ws.start()
-        validation_errors = []
         try:
-            for idx, workflow_file in enumerate(workflows, 1):
-                ctx.log(f"  [{idx}/{total_workflows}] Validating {workflow_file.name}")
-                try:
-                    ws.validate_workflow(_resolve_workflow_path(ctx, workflow_file))
-                    ctx.log("    OK")
-                except Exception as e:
-                    ctx.log(f"    FAILED: {e}")
-                    validation_errors.append((workflow_file.name, str(e)))
-        finally:
-            ws.stop()
+            # Load workflow JSON
+            with open(workflow_path, encoding='utf-8-sig') as f:
+                workflow = json.load(f)
 
-        if validation_errors:
-            raise TestError(
-                f"Workflow validation failed ({len(validation_errors)} error(s))",
-                "\n".join(f"  - {name}: {err}" for name, err in validation_errors)
-            )
+            # Run validation
+            result = validator.validate(workflow)
 
-    except ImportError:
-        ctx.log("WARNING: Validation requires playwright")
+            if result.is_valid:
+                ctx.log("    OK")
+            else:
+                error_msgs = [str(e) for e in result.errors]
+                ctx.log(f"    FAILED: {len(result.errors)} error(s)")
+                for err in result.errors[:5]:  # Show first 5
+                    ctx.log(f"      {err}")
+                if len(result.errors) > 5:
+                    ctx.log(f"      ... and {len(result.errors) - 5} more")
+                validation_errors.append((workflow_file.name, "; ".join(error_msgs)))
+
+        except json.JSONDecodeError as e:
+            ctx.log(f"    FAILED: Invalid JSON - {e}")
+            validation_errors.append((workflow_file.name, f"Invalid JSON: {e}"))
+        except FileNotFoundError:
+            ctx.log(f"    FAILED: File not found")
+            validation_errors.append((workflow_file.name, "File not found"))
+        except Exception as e:
+            ctx.log(f"    FAILED: {e}")
+            validation_errors.append((workflow_file.name, str(e)))
+
+    if validation_errors:
+        raise TestError(
+            f"Workflow validation failed ({len(validation_errors)} error(s))",
+            "\n".join(f"  - {name}: {err}" for name, err in validation_errors)
+        )
 
     return ctx
 
