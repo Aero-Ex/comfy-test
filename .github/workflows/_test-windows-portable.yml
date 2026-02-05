@@ -26,39 +26,47 @@ jobs:
       PYTHON_EXE: ${{ github.workspace }}\ComfyUI_windows_portable\python_embeded\python.exe
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}\.playwright
     steps:
-      # --- GitHub cache ---
-      - name: GitHub cache
-        id: github-cache
-        uses: actions/cache@v4
+      # --- Restore cache ---
+      - uses: actions/cache/restore@v4
+        id: setup-cache
         with:
           path: |
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ github.workspace }}\ComfyUI_windows_portable
-          key: setup-windows-portable-hosted-v1
+          key: setup-windows-portable-hosted-v2
 
       # --- Setup (skip if cache hit) ---
       - name: Download portable ComfyUI
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.setup-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: curl.exe -L --progress-bar -o portable.7z "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z"
 
       - name: Extract portable ComfyUI
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.setup-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           & "C:\Program Files\7-Zip\7z.exe" x portable.7z -y -bsp1
 
       - name: Remove portable archive
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.setup-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: Remove-Item portable.7z
 
       - name: Install Playwright browsers
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.setup-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           & $env:PYTHON_EXE -m pip install playwright
           & $env:PYTHON_EXE -m playwright install chromium
+
+      # --- Save cache immediately after setup ---
+      - uses: actions/cache/save@v4
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+            ${{ github.workspace }}\ComfyUI_windows_portable
+          key: setup-windows-portable-hosted-v2
 
       # --- Install comfy-test (fresh) ---
       - name: Install comfy-test

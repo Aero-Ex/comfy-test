@@ -37,10 +37,9 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
 
-      # --- GitHub cache ---
-      - name: GitHub cache
-        id: github-cache
-        uses: actions/cache@v4
+      # --- Restore cache ---
+      - uses: actions/cache/restore@v4
+        id: setup-cache
         with:
           path: |
             ${{ env.TOOLS_VENV }}
@@ -48,11 +47,11 @@ jobs:
             ${{ env.COMFYUI_DIR }}
             ${{ env.COMFY_VENV }}
             ${{ env.UV_PYTHON_INSTALL_DIR }}
-          key: setup-linux-hosted-uv-v1
+          key: setup-linux-hosted-uv-v2
 
       # --- Setup (skip if cache hit) ---
       - name: Setup environment
-        if: steps.github-cache.outputs.cache-hit != 'true'
+        if: steps.setup-cache.outputs.cache-hit != 'true'
         run: |
           uv python install 3.13
           uv venv $TOOLS_VENV --python 3.13
@@ -62,6 +61,18 @@ jobs:
           uv pip install --python $COMFY_VENV -r $COMFYUI_DIR/requirements.txt
           $TOOLS_VENV/bin/python -m playwright install chromium
           $TOOLS_VENV/bin/python -m playwright install-deps chromium || true
+
+      # --- Save cache immediately after setup ---
+      - uses: actions/cache/save@v4
+        if: steps.setup-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ env.TOOLS_VENV }}
+            ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+            ${{ env.COMFYUI_DIR }}
+            ${{ env.COMFY_VENV }}
+            ${{ env.UV_PYTHON_INSTALL_DIR }}
+          key: setup-linux-hosted-uv-v2
 
       # --- Install comfy-test (fresh) ---
       - name: Install comfy-test
