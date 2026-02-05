@@ -49,28 +49,36 @@ except ImportError as e:
     print(json.dumps({{"success": False, "error": f"Failed to import {{node_name}}: {{e}}"}}))
     sys.exit(1)
 
-# Get NODE_CLASS_MAPPINGS
-mappings = getattr(module, "NODE_CLASS_MAPPINGS", {{}})
+# Get NODE_CLASS_MAPPINGS and run instantiation with full error capture
+try:
+    mappings = getattr(module, "NODE_CLASS_MAPPINGS", {{}})
 
-errors = []
-instantiated = []
+    errors = []
+    instantiated = []
 
-for name, cls in mappings.items():
-    print(f"Instantiating: {{name}}", flush=True)
-    try:
-        instance = cls()
-        instantiated.append(name)
-        print(f"  OK: {{name}}", flush=True)
-    except Exception as e:
-        print(f"  FAILED: {{name}} - {{e}}", flush=True)
-        errors.append({{"node": name, "error": str(e)}})
+    for name, cls in mappings.items():
+        print(f"Instantiating: {{name}}", flush=True)
+        try:
+            instance = cls()
+            instantiated.append(name)
+            print(f"  OK: {{name}}", flush=True)
+        except Exception as e:
+            print(f"  FAILED: {{name}} - {{e}}", flush=True)
+            errors.append({{"node": name, "error": str(e)}})
 
-result = {{
-    "success": len(errors) == 0,
-    "instantiated": instantiated,
-    "errors": errors,
-}}
-print(json.dumps(result))
+    result = {{
+        "success": len(errors) == 0,
+        "instantiated": instantiated,
+        "errors": errors,
+    }}
+    print(json.dumps(result))
+except Exception as e:
+    import traceback
+    tb = traceback.format_exc()
+    print(f"FATAL ERROR: {{e}}", flush=True)
+    print(tb, flush=True)
+    print(json.dumps({{"success": False, "error": str(e), "traceback": tb}}))
+    sys.exit(1)
 '''
 
 

@@ -228,6 +228,16 @@ class TestManager:
         self._log(f"\n{'='*60}")
         self._log(f"Testing: {platform_name}")
         self._log(f"Levels: {', '.join(l.value for l in config_levels)}")
+        # Log versions for debugging
+        try:
+            from importlib.metadata import version as get_version
+            self._log(f"comfy-test: {get_version('comfy-test')}")
+            try:
+                self._log(f"comfy-env: {get_version('comfy-env')}")
+            except Exception:
+                self._log("comfy-env: not installed")
+        except Exception:
+            pass
         self._log(f"{'='*60}")
 
         if dry_run:
