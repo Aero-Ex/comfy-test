@@ -1,9 +1,11 @@
 """INSTANTIATION level - Test node constructors."""
 
 import json
+import os
 import subprocess
 
 from ...common.errors import TestError
+from ...common.comfy_env import get_cuda_packages
 from ..context import LevelContext
 
 
@@ -87,11 +89,18 @@ def run(ctx: LevelContext) -> LevelContext:
     """
     ctx.log("Testing node constructors...")
 
+    # Get CUDA packages if not already set (e.g., when INSTALL was skipped)
+    cuda_packages = ctx.cuda_packages
+    if not cuda_packages and not os.environ.get("COMFY_TEST_GPU"):
+        cuda_packages = tuple(get_cuda_packages(ctx.node_dir))
+        if cuda_packages:
+            ctx.log(f"Found CUDA packages to mock: {', '.join(cuda_packages)}")
+
     # Build the test script
     script = INSTANTIATION_SCRIPT.format(
         custom_nodes_dir=str(ctx.paths.custom_nodes_dir).replace("\\", "/"),
         node_name=ctx.node_dir.name,
-        cuda_packages_json=json.dumps(list(ctx.cuda_packages)),
+        cuda_packages_json=json.dumps(list(cuda_packages)),
     )
 
     # Run the script
