@@ -72,7 +72,7 @@ jobs:
       - name: Install comfy-test
         shell: powershell
         run: |
-          & $env:PYTHON_EXE -m pip install comfy-test pillow
+          & $env:PYTHON_EXE -m pip install --upgrade comfy-test pillow
 
       # --- Verify base server before adding custom nodes ---
       - name: Verify base server starts
