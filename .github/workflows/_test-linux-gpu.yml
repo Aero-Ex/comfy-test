@@ -60,7 +60,10 @@ jobs:
           uv venv $TOOLS_VENV --python 3.13
           uv pip install --python $TOOLS_VENV playwright
           git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git $COMFYUI_DIR
+          # Patch requirements.txt to remove torch/torchvision/torchaudio (we install CUDA versions separately)
+          sed -i -E '/^(torch|torchvision|torchaudio)$/d' $COMFYUI_DIR/requirements.txt
           uv venv $COMFY_VENV --python 3.13
+          uv pip install --python $COMFY_VENV torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
           uv pip install --python $COMFY_VENV -r $COMFYUI_DIR/requirements.txt
           $TOOLS_VENV/bin/python -m playwright install chromium
           $TOOLS_VENV/bin/python -m playwright install-deps chromium || true

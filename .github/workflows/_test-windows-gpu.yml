@@ -64,7 +64,10 @@ jobs:
           uv venv $env:TOOLS_VENV --python 3.13
           uv pip install --python "$env:TOOLS_VENV" playwright
           git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git $env:COMFYUI_DIR
+          # Patch requirements.txt to remove torch/torchvision/torchaudio (we install CUDA versions separately)
+          (Get-Content "$env:COMFYUI_DIR\requirements.txt") | Where-Object { $_ -notmatch '^(torch|torchvision|torchaudio)$' } | Set-Content "$env:COMFYUI_DIR\requirements.txt"
           uv venv $env:COMFY_VENV --python 3.13
+          uv pip install --python $env:COMFY_VENV torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu130
           uv pip install --python $env:COMFY_VENV -r "$env:COMFYUI_DIR\requirements.txt"
           & "$env:TOOLS_VENV\Scripts\playwright" install chromium
 
