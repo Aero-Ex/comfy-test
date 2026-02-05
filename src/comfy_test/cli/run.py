@@ -1,5 +1,6 @@
 """Run command for comfy-test CLI."""
 
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -84,7 +85,8 @@ def cmd_run(args) -> int:
         # Build output path: logs_dir/NodeName-XXXX/branch/platform-gpu
         run_id = f"{short_name}-{timestamp}"
         branch = getattr(args, 'branch', None)
-        gpu_suffix = "gpu" if args.gpu else "cpu"
+        gpu = args.gpu or os.environ.get("COMFY_TEST_GPU") == "1"
+        gpu_suffix = "gpu" if gpu else "cpu"
         platform_dir = f"{platform}-{gpu_suffix}"
         if branch:
             output_dir = logs_dir / run_id / branch / platform_dir
