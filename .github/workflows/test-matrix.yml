@@ -30,10 +30,16 @@ jobs:
   setup:
     runs-on: ubuntu-latest
     outputs:
+      # CPU platforms
       run-linux: ${{ steps.platforms.outputs.linux }}
       run-macos: ${{ steps.platforms.outputs.macos }}
       run-windows: ${{ steps.platforms.outputs.windows }}
       run-windows-portable: ${{ steps.platforms.outputs.windows-portable }}
+      # GPU platforms (separate toggles)
+      run-linux-gpu: ${{ steps.platforms.outputs.linux-gpu }}
+      run-windows-gpu: ${{ steps.platforms.outputs.windows-gpu }}
+      run-windows-portable-gpu: ${{ steps.platforms.outputs.windows-portable-gpu }}
+      # Workflow lists
       has-cpu: ${{ steps.platforms.outputs.has-cpu }}
       has-gpu: ${{ steps.platforms.outputs.has-gpu }}
     steps:
@@ -46,10 +52,15 @@ jobs:
           get_platform() {
             [ -f "$config" ] && grep -E "^$1\s*=" "$config" 2>/dev/null | grep -qi "false" && echo "false" || echo "true"
           }
+          # CPU platforms
           echo "linux=$(get_platform linux)" >> $GITHUB_OUTPUT
           echo "macos=$(get_platform macos)" >> $GITHUB_OUTPUT
           echo "windows=$(get_platform windows)" >> $GITHUB_OUTPUT
           echo "windows-portable=$(get_platform windows_portable)" >> $GITHUB_OUTPUT
+          # GPU platforms (separate toggles, default to true if not specified)
+          echo "linux-gpu=$(get_platform linux_gpu)" >> $GITHUB_OUTPUT
+          echo "windows-gpu=$(get_platform windows_gpu)" >> $GITHUB_OUTPUT
+          echo "windows-portable-gpu=$(get_platform windows_portable_gpu)" >> $GITHUB_OUTPUT
 
           # Check if cpu/gpu workflow lists are defined (non-empty)
           has_workflows() {
@@ -95,11 +106,11 @@ jobs:
       timeout-minutes: ${{ inputs.timeout-minutes }}
 
   # ---------------------------------------------------------------------------
-  # GPU tests (self-hosted runners) - only if gpu workflows defined
+  # GPU tests (self-hosted runners) - only if gpu workflows defined AND platform enabled
   # ---------------------------------------------------------------------------
   linux-gpu:
     needs: setup
-    if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-linux == 'true'
+    if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-linux-gpu == 'true'
     uses: ./.github/workflows/_test-linux-gpu.yml
     with:
       config-file: ${{ inputs.config-file }}
@@ -116,7 +127,7 @@ jobs:
 
   windows-gpu:
     needs: setup
-    if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-windows == 'true'
+    if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-windows-gpu == 'true'
     uses: ./.github/workflows/_test-windows-gpu.yml
     with:
       config-file: ${{ inputs.config-file }}
@@ -124,7 +135,7 @@ jobs:
 
   windows-portable-gpu:
     needs: setup
-    if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-windows-portable == 'true'
+    if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-windows-portable-gpu == 'true'
     uses: ./.github/workflows/_test-windows-portable-gpu.yml
     with:
       config-file: ${{ inputs.config-file }}

@@ -183,9 +183,12 @@ class TestConfig:
     levels: List[TestLevel] = field(default_factory=lambda: list(TestLevel))
     workflow: WorkflowConfig = field(default_factory=WorkflowConfig)
     linux: PlatformTestConfig = field(default_factory=PlatformTestConfig)
+    linux_gpu: PlatformTestConfig = field(default_factory=PlatformTestConfig)
     macos: PlatformTestConfig = field(default_factory=PlatformTestConfig)
     windows: PlatformTestConfig = field(default_factory=PlatformTestConfig)
+    windows_gpu: PlatformTestConfig = field(default_factory=PlatformTestConfig)
     windows_portable: PlatformTestConfig = field(default_factory=PlatformTestConfig)
+    windows_portable_gpu: PlatformTestConfig = field(default_factory=PlatformTestConfig)
 
     def __post_init__(self):
         """Validate configuration."""
@@ -214,10 +217,16 @@ class TestConfig:
         # Ensure platform configs are PlatformTestConfig
         if isinstance(self.linux, dict):
             self.linux = PlatformTestConfig(**self.linux)
+        if isinstance(self.linux_gpu, dict):
+            self.linux_gpu = PlatformTestConfig(**self.linux_gpu)
         if isinstance(self.windows, dict):
             self.windows = PlatformTestConfig(**self.windows)
+        if isinstance(self.windows_gpu, dict):
+            self.windows_gpu = PlatformTestConfig(**self.windows_gpu)
         if isinstance(self.windows_portable, dict):
             self.windows_portable = PlatformTestConfig(**self.windows_portable)
+        if isinstance(self.windows_portable_gpu, dict):
+            self.windows_portable_gpu = PlatformTestConfig(**self.windows_portable_gpu)
 
     @property
     def python_short(self) -> str:
@@ -228,7 +237,8 @@ class TestConfig:
         """Get configuration for a specific platform.
 
         Args:
-            platform: Platform name ('linux', 'macos', 'windows', 'windows_portable')
+            platform: Platform name ('linux', 'linux_gpu', 'macos', 'windows', 'windows_gpu',
+                      'windows_portable', 'windows_portable_gpu')
 
         Returns:
             PlatformTestConfig for the specified platform
@@ -238,10 +248,16 @@ class TestConfig:
         """
         platform_map = {
             "linux": self.linux,
+            "linux_gpu": self.linux_gpu,
+            "linux-gpu": self.linux_gpu,
             "macos": self.macos,
             "windows": self.windows,
+            "windows_gpu": self.windows_gpu,
+            "windows-gpu": self.windows_gpu,
             "windows_portable": self.windows_portable,
-            "windows-portable": self.windows_portable,  # Allow hyphen variant
+            "windows-portable": self.windows_portable,
+            "windows_portable_gpu": self.windows_portable_gpu,
+            "windows-portable-gpu": self.windows_portable_gpu,
         }
         if platform not in platform_map:
             raise ValueError(f"Unknown platform: {platform}")

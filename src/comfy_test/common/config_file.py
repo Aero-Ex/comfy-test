@@ -211,7 +211,7 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
     else:
         workflow = _parse_workflow_config({}, base_dir)
 
-    # Parse platform-specific configs
+    # Parse platform-specific configs (CPU)
     linux_config = _parse_platform_config(
         test_section.get("linux", {}),
         platforms.get("linux", True)
@@ -229,6 +229,20 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
         platforms.get("windows_portable", True)
     )
 
+    # Parse platform-specific configs (GPU)
+    linux_gpu_config = _parse_platform_config(
+        test_section.get("linux_gpu", {}),
+        platforms.get("linux_gpu", True)
+    )
+    windows_gpu_config = _parse_platform_config(
+        test_section.get("windows_gpu", {}),
+        platforms.get("windows_gpu", True)
+    )
+    windows_portable_gpu_config = _parse_platform_config(
+        test_section.get("windows_portable_gpu", {}),
+        platforms.get("windows_portable_gpu", True)
+    )
+
     try:
         # Build kwargs, only include python_version if explicitly set
         kwargs = {
@@ -238,9 +252,12 @@ def _parse_config(data: Dict[str, Any], base_dir: Path) -> TestConfig:
             "levels": levels,
             "workflow": workflow,
             "linux": linux_config,
+            "linux_gpu": linux_gpu_config,
             "macos": macos_config,
             "windows": windows_config,
+            "windows_gpu": windows_gpu_config,
             "windows_portable": windows_portable_config,
+            "windows_portable_gpu": windows_portable_gpu_config,
         }
         if python_version is not None:
             kwargs["python_version"] = python_version
