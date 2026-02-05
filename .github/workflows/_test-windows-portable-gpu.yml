@@ -114,6 +114,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:COMFY_TEST_LOGS_DIR | Out-Null
 
           Write-Host "Starting GPU server via batch file..."
+          $env:COMFY_ENV_DEBUG = "1"
           $serverProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "run_nvidia_gpu.bat" -NoNewWindow -PassThru
 
           Write-Host "Waiting for server (up to 5 minutes)..."
