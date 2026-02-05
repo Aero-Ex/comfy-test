@@ -12,7 +12,7 @@ from ...common.errors import TestError, WorkflowError, WorkflowExecutionError, T
 from ...common.resource_monitor import ResourceMonitor
 from ...comfyui.workflow import WorkflowRunner
 from ..context import LevelContext
-from ..results import has_gpu, get_hardware_info, get_workflow_timeout
+from ..results import get_hardware_info, get_workflow_timeout
 
 
 class ProgressSpinner:
@@ -84,14 +84,22 @@ def run(ctx: LevelContext) -> LevelContext:
             raise TestError(f"Workflow not found: {ctx.workflow_filter}")
         ctx.log(f"Workflow filter: running only {workflows[0]}")
 
-    # Check GPU availability
-    gpu_available = has_gpu()
+    # Determine runner type and which workflows to run
+    is_gpu_runner = os.environ.get("COMFY_TEST_GPU") == "1"
+    cpu_workflows = set(ctx.config.workflow.cpu or [])
     gpu_workflows = set(ctx.config.workflow.gpu or [])
-    if gpu_workflows:
-        if gpu_available:
-            ctx.log("GPU detected - will execute GPU workflows")
-        else:
-            ctx.log("No GPU detected - GPU workflows will be skipped")
+
+    if is_gpu_runner:
+        allowed_workflows = gpu_workflows
+        runner_type = "GPU"
+    else:
+        allowed_workflows = cpu_workflows
+        runner_type = "CPU"
+
+    if allowed_workflows:
+        ctx.log(f"{runner_type} runner - will execute {len(allowed_workflows)} workflow(s)")
+    else:
+        ctx.log(f"{runner_type} runner - no workflows configured for this runner type")
 
     total_workflows = len(workflows)
     ctx.log(f"Running {total_workflows} workflow(s) (all with videos)...")
@@ -152,15 +160,14 @@ def run(ctx: LevelContext) -> LevelContext:
             status = "pass"
             error_msg = None
 
-            # Skip GPU workflows if no GPU
-            is_gpu_workflow = workflow_file in gpu_workflows
-            if is_gpu_workflow and not gpu_available:
-                ctx.log(f"  [{idx}/{total_workflows}] SKIPPED (GPU required) {workflow_file.name}")
+            # Skip workflows not configured for this runner type
+            if allowed_workflows and workflow_file not in allowed_workflows:
+                ctx.log(f"  [{idx}/{total_workflows}] SKIPPED (not in {runner_type.lower()} list) {workflow_file.name}")
                 results.append({
                     "name": workflow_file.stem,
                     "status": "skipped",
                     "duration_seconds": 0,
-                    "error": "GPU required but not available",
+                    "error": f"Not configured for {runner_type} runner",
                     "hardware": None,
                 })
                 continue
