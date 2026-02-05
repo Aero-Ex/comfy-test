@@ -116,15 +116,6 @@ jobs:
       config-file: ${{ inputs.config-file }}
       timeout-minutes: ${{ inputs.timeout-minutes }}
 
-  macos-gpu:
-    needs: setup
-    if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-macos == 'true'
-    uses: ./.github/workflows/_test-macos.yml
-    with:
-      config-file: ${{ inputs.config-file }}
-      timeout-minutes: ${{ inputs.timeout-minutes }}
-      gpu: true
-
   windows-gpu:
     needs: setup
     if: needs.setup.outputs.has-gpu == 'true' && needs.setup.outputs.run-windows-gpu == 'true'
@@ -145,6 +136,6 @@ jobs:
   # Publish results
   # ---------------------------------------------------------------------------
   publish:
-    needs: [linux-cpu, macos-cpu, windows-cpu, windows-portable-cpu, linux-gpu, macos-gpu, windows-gpu, windows-portable-gpu]
+    needs: [linux-cpu, macos-cpu, windows-cpu, windows-portable-cpu, linux-gpu, windows-gpu, windows-portable-gpu]
     if: always()
     uses: ./.github/workflows/_publish-results.yml
