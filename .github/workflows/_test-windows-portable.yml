@@ -66,6 +66,36 @@ jobs:
         run: |
           & $env:PYTHON_EXE -m pip install comfy-test pillow
 
+      # --- Verify base server before adding custom nodes ---
+      - name: Verify base server starts
+        shell: powershell
+        working-directory: ${{ github.workspace }}\ComfyUI_windows_portable
+        run: |
+          Write-Host "Verifying base ComfyUI server starts..."
+          $serverProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "run_cpu.bat" -NoNewWindow -PassThru
+
+          $serverReady = $false
+          for ($i = 1; $i -le 60; $i++) {
+            if ($serverProcess.HasExited) {
+              Write-Host "Server process died! Exit code: $($serverProcess.ExitCode)"
+              exit 1
+            }
+            try {
+              Invoke-WebRequest -Uri "http://127.0.0.1:8188/system_stats" -UseBasicParsing -ErrorAction Stop | Out-Null
+              Write-Host "Base server verified after $i seconds!"
+              $serverReady = $true
+              break
+            } catch { Start-Sleep -Seconds 1 }
+          }
+
+          Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
+
+          if (-not $serverReady) {
+            Write-Host "Base server failed to start within 60 seconds"
+            exit 1
+          }
+          Write-Host "Base server OK - proceeding with custom node installation"
+
       # --- Checkout and run ---
       - uses: actions/checkout@v4
         with:
