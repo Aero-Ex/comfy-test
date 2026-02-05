@@ -45,8 +45,12 @@ node_name = "{node_name}"
 try:
     import importlib
     module = importlib.import_module(node_name)
-except ImportError as e:
-    print(json.dumps({{"success": False, "error": f"Failed to import {{node_name}}: {{e}}"}}))
+except Exception as e:
+    import traceback
+    tb = traceback.format_exc()
+    print(f"IMPORT ERROR: {{e}}", flush=True)
+    print(tb, flush=True)
+    print(json.dumps({{"success": False, "error": f"Failed to import {{node_name}}: {{e}}", "traceback": tb}}))
     sys.exit(1)
 
 # Get NODE_CLASS_MAPPINGS and run instantiation with full error capture
