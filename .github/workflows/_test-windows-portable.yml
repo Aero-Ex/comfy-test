@@ -24,7 +24,7 @@ jobs:
           path: |
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ github.workspace }}\ComfyUI_windows_portable
-          key: setup-windows-portable-hosted-v2
+          key: setup-windows-portable
 
       # --- Setup (skip if cache hit) ---
       - name: Download portable ComfyUI
@@ -35,7 +35,8 @@ jobs:
       - name: Extract portable ComfyUI
         if: steps.setup-cache.outputs.cache-hit != 'true'
         shell: powershell
-        run: & "C:\Program Files\7-Zip\7z.exe" x portable.7z -y -bsp1
+        run: |
+          & "C:\Program Files\7-Zip\7z.exe" x portable.7z -y -bsp1
 
       - name: Remove portable archive
         if: steps.setup-cache.outputs.cache-hit != 'true'
@@ -56,7 +57,7 @@ jobs:
           path: |
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ github.workspace }}\ComfyUI_windows_portable
-          key: setup-windows-portable-hosted-v2
+          key: setup-windows-portable
 
       # --- Install comfy-test (always fresh) ---
       - name: Install comfy-test

@@ -33,7 +33,7 @@ jobs:
             ${{ env.SITE_PACKAGES }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
-          key: setup-windows-cpu-v4
+          key: setup-windows-cpu
 
       # --- Setup (skip if cache hit) ---
       - name: Clone ComfyUI
@@ -59,7 +59,7 @@ jobs:
             ${{ env.SITE_PACKAGES }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
-          key: setup-windows-cpu-v4
+          key: setup-windows-cpu
 
       # --- Install comfy-test (always fresh) ---
       - name: Install comfy-test

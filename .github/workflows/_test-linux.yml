@@ -33,7 +33,7 @@ jobs:
             ${{ env.SITE_PACKAGES }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
-          key: setup-linux-cpu-v4
+          key: setup-linux-cpu
 
       - name: Install uv
         run: pip install uv
@@ -62,7 +62,7 @@ jobs:
             ${{ env.SITE_PACKAGES }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
-          key: setup-linux-cpu-v4
+          key: setup-linux-cpu
 
       # --- Install comfy-test (always fresh) ---
       - name: Install comfy-test

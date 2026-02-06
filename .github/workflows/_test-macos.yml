@@ -30,7 +30,7 @@ jobs:
             ${{ env.SITE_PACKAGES }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
-          key: setup-macos-v3
+          key: setup-macos
 
       # --- Setup (skip if cache hit) ---
       - name: Clone ComfyUI
@@ -56,7 +56,7 @@ jobs:
             ${{ env.SITE_PACKAGES }}
             ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
             ${{ env.COMFYUI_DIR }}
-          key: setup-macos-v3
+          key: setup-macos
 
       # --- Install comfy-test (always fresh) ---
       - name: Install comfy-test
