@@ -32,16 +32,18 @@ jobs:
 
       - uses: astral-sh/setup-uv@v4
 
-      # --- Restore local cache ---
+      # --- Restore local cache (overlayfs: instant, cache stays read-only) ---
       - name: Restore local cache
         id: local-cache
         run: |
           if [ -d "$LOCAL_CACHE_DIR" ]; then
-            echo "Restoring from local cache..."
-            (echo "  Copying python..." && cp -a "$LOCAL_CACHE_DIR/python/." "$PYTHON_DIR/" && echo "  python done") &
-            (echo "  Copying ComfyUI..." && cp -a "$LOCAL_CACHE_DIR/ComfyUI/." "$COMFYUI_DIR/" && echo "  ComfyUI done") &
-            wait
-            echo "Cache restored!"
+            echo "Restoring from local cache (overlayfs)..."
+            mkdir -p "$PYTHON_DIR" "$COMFYUI_DIR"
+            mkdir -p /tmp/ovl-python-upper /tmp/ovl-python-work
+            mkdir -p /tmp/ovl-comfy-upper /tmp/ovl-comfy-work
+            sudo mount -t overlay overlay -o lowerdir="$LOCAL_CACHE_DIR/python",upperdir=/tmp/ovl-python-upper,workdir=/tmp/ovl-python-work "$PYTHON_DIR"
+            sudo mount -t overlay overlay -o lowerdir="$LOCAL_CACHE_DIR/ComfyUI",upperdir=/tmp/ovl-comfy-upper,workdir=/tmp/ovl-comfy-work "$COMFYUI_DIR"
+            echo "Cache mounted!"
             echo "cache-hit=true" >> $GITHUB_OUTPUT
           else
             echo "No local cache found"
@@ -161,9 +163,12 @@ jobs:
           if-no-files-found: ignore
           include-hidden-files: true
 
-      # --- Cleanup (no trace on self-hosted) ---
+      # --- Cleanup (unmount overlays, then wipe workspace) ---
       - name: Cleanup workspace
         if: always()
         run: |
+          sudo umount "$PYTHON_DIR" 2>/dev/null || true
+          sudo umount "$COMFYUI_DIR" 2>/dev/null || true
           rm -rf "$GITHUB_WORKSPACE"/* || true
           rm -rf "$GITHUB_WORKSPACE"/.* 2>/dev/null || true
+          rm -rf /tmp/ovl-* 2>/dev/null || true
