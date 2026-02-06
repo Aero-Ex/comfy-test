@@ -85,6 +85,13 @@ jobs:
           & "$env:COMFY_VENV\Scripts\Activate.ps1"
           if (Test-Path "requirements.txt") { uv pip install -r requirements.txt }
           $env:UV_PYTHON_INSTALL_DIR = $null
+          Write-Host "=== Debug: UV env vars ==="
+          Write-Host "UV_PYTHON_INSTALL_DIR: $env:UV_PYTHON_INSTALL_DIR"
+          Write-Host "UV_CACHE_DIR: $env:UV_CACHE_DIR"
+          Write-Host "=== Debug: PATH entries with python ==="
+          $env:PATH -split ';' | Where-Object { $_ -match 'python' } | ForEach-Object { Write-Host "  $_" }
+          Write-Host "=== Debug: which python ==="
+          Get-Command python -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
           if (Test-Path "install.py") { python install.py }
 
       - name: Install validate endpoint
