@@ -11,6 +11,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       COMFY_TEST_GPU: "0"
+      UV_BREAK_SYSTEM_PACKAGES: "1"
       COMFY_TEST_LOGS_DIR: ${{ github.workspace }}\comfy-test-logs
       NODE_NAME: ${{ github.event.repository.name }}
       COMFYUI_DIR: ${{ github.workspace }}\ComfyUI
