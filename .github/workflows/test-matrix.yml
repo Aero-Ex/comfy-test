@@ -42,6 +42,8 @@ jobs:
       # Workflow lists
       has-cpu: ${{ steps.platforms.outputs.has-cpu }}
       has-gpu: ${{ steps.platforms.outputs.has-gpu }}
+      # Publish
+      run-publish: ${{ steps.platforms.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
 
@@ -68,6 +70,9 @@ jobs:
           }
           echo "has-cpu=$(has_workflows cpu)" >> $GITHUB_OUTPUT
           echo "has-gpu=$(has_workflows gpu)" >> $GITHUB_OUTPUT
+
+          # Publish toggle (defaults to true)
+          echo "publish=$(get_platform publish)" >> $GITHUB_OUTPUT
 
   # ---------------------------------------------------------------------------
   # CPU tests (GitHub-hosted runners) - only if cpu workflows defined
@@ -123,6 +128,6 @@ jobs:
   # Publish results
   # ---------------------------------------------------------------------------
   publish:
-    needs: [linux-cpu, macos-cpu, windows-cpu, windows-portable-cpu, linux-gpu, windows-gpu, windows-portable-gpu]
-    if: always()
+    needs: [setup, linux-cpu, macos-cpu, windows-cpu, windows-portable-cpu, linux-gpu, windows-gpu, windows-portable-gpu]
+    if: always() && needs.setup.outputs.run-publish == 'true'
     uses: ./.github/workflows/_publish-results.yml
