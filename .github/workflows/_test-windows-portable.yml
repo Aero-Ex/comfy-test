@@ -62,7 +62,8 @@ jobs:
       # --- Install comfy-test (always fresh) ---
       - name: Install comfy-test
         shell: powershell
-        run: & $env:PYTHON_EXE -m pip install --upgrade comfy-test pillow
+        run: |
+          & $env:PYTHON_EXE -m pip install --upgrade comfy-test pillow
 
       # --- Checkout ---
       - uses: actions/checkout@v4
