@@ -10,6 +10,8 @@ jobs:
     timeout-minutes: 60
     env:
       PYTHONUNBUFFERED: "1"
+      PYTHONFAULTHANDLER: "1"
+      COMFY_ENV_DEBUG: "1"
       COMFY_TEST_GPU: "0"
       COMFY_TEST_LOGS_DIR: ${{ github.workspace }}\comfy-test-logs
       COMFY_TEST_WORKSPACE_DIR: ${{ github.workspace }}\test_workspaces
