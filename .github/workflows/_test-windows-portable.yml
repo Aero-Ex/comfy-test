@@ -91,7 +91,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path $env:COMFY_TEST_LOGS_DIR | Out-Null
           $env:COMFY_ENV_DEBUG = "1"
-          $serverProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "run_cpu.bat" -NoNewWindow -PassThru
+          $serverProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "run_cpu.bat > `"$env:COMFY_TEST_LOGS_DIR\server.log`" 2> `"$env:COMFY_TEST_LOGS_DIR\server_stderr.log`"" -NoNewWindow -PassThru
           echo "SERVER_PID=$($serverProcess.Id)" >> $env:GITHUB_ENV
 
       - name: Wait for server
@@ -101,7 +101,11 @@ jobs:
           for ($i = 1; $i -le 300; $i++) {
             $proc = Get-Process -Id $env:SERVER_PID -ErrorAction SilentlyContinue
             if (-not $proc -or $proc.HasExited) {
-              Write-Host "Server process died!"
+              Write-Host "Server process died! (exit code: $($proc.ExitCode))"
+              Write-Host "=== SERVER STDOUT ==="
+              Get-Content "$env:COMFY_TEST_LOGS_DIR\server.log" -ErrorAction SilentlyContinue
+              Write-Host "=== SERVER STDERR ==="
+              Get-Content "$env:COMFY_TEST_LOGS_DIR\server_stderr.log" -ErrorAction SilentlyContinue
               exit 1
             }
             try {
@@ -115,6 +119,10 @@ jobs:
           }
           if (-not $serverReady) {
             Write-Host "Server failed to start"
+            Write-Host "=== SERVER STDOUT ==="
+            Get-Content "$env:COMFY_TEST_LOGS_DIR\server.log" -ErrorAction SilentlyContinue
+            Write-Host "=== SERVER STDERR ==="
+            Get-Content "$env:COMFY_TEST_LOGS_DIR\server_stderr.log" -ErrorAction SilentlyContinue
             exit 1
           }
 
