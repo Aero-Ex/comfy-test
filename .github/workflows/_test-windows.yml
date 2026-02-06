@@ -84,9 +84,6 @@ jobs:
         run: |
           & "$env:COMFY_VENV\Scripts\Activate.ps1"
           if (Test-Path "requirements.txt") { uv pip install -r requirements.txt }
-          # Prevent pixi/rattler from discovering UV-managed Python 3.13 (causes SRE mismatch)
-          $env:UV_PYTHON_INSTALL_DIR = $null
-          $env:UV_PYTHON_PREFERENCE = "only-system"
           if (Test-Path "install.py") { python install.py }
 
       - name: Install validate endpoint
