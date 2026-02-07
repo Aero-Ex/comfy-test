@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
 
       # --- Restore cache ---
       - uses: actions/cache/restore@v4
@@ -98,6 +98,7 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path $env:COMFY_TEST_LOGS_DIR | Out-Null
+          $env:PATH = "$env:VENV\Scripts;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem"
           $serverProcess = Start-Process -FilePath "$env:VENV\Scripts\python" `
             -ArgumentList "-u", "$env:COMFYUI_DIR\main.py", "--listen", "127.0.0.1", "--port", "8188", "--cpu" `
             -NoNewWindow -PassThru -RedirectStandardOutput "$env:COMFY_TEST_LOGS_DIR\server.log" -RedirectStandardError "$env:COMFY_TEST_LOGS_DIR\server_stderr.log"

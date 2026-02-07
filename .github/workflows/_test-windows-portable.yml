@@ -93,6 +93,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path $env:COMFY_TEST_LOGS_DIR | Out-Null
           $env:COMFY_ENV_DEBUG = "1"
+          $pythonDir = Split-Path $env:PYTHON_EXE
+          $env:PATH = "$pythonDir;$pythonDir\Scripts;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem"
           $serverProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "run_cpu.bat > `"$env:COMFY_TEST_LOGS_DIR\server.log`" 2> `"$env:COMFY_TEST_LOGS_DIR\server_stderr.log`"" -NoNewWindow -PassThru
           echo "SERVER_PID=$($serverProcess.Id)" >> $env:GITHUB_ENV
 
