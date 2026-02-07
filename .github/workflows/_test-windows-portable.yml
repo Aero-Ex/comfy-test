@@ -62,6 +62,15 @@ jobs:
             ${{ github.workspace }}\ComfyUI_windows_portable
           key: setup-windows-portable
 
+      # --- Verify base setup ---
+      - name: Verify base setup
+        shell: powershell
+        run: |
+          $pythonDir = Split-Path $env:PYTHON_EXE
+          $env:PATH = "$pythonDir;$pythonDir\Scripts;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem"
+          & $env:PYTHON_EXE -c "import torch; print(f'torch {torch.__version__} OK')"
+          if ($LASTEXITCODE -ne 0) { Write-Host 'torch import failed'; exit 1 }
+
       # --- Install comfy-test (always fresh) ---
       - name: Install comfy-test
         shell: powershell

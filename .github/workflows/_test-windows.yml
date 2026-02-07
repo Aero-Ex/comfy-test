@@ -69,6 +69,16 @@ jobs:
             ${{ env.COMFYUI_DIR }}
           key: setup-windows-cpu
 
+      # --- Verify base setup ---
+      - name: Verify base setup
+        shell: powershell
+        run: |
+          $env:PATH = "$env:VENV\Scripts;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem"
+          & "$env:VENV\Scripts\python" -c "import torch; print(f'torch {torch.__version__} OK')"
+          if ($LASTEXITCODE -ne 0) { Write-Host 'torch import failed'; exit 1 }
+          & "$env:VENV\Scripts\python" -u "$env:COMFYUI_DIR\main.py" --quick-test-for-ci --cpu
+          if ($LASTEXITCODE -ne 0) { Write-Host 'ComfyUI quick test failed'; exit 1 }
+
       # --- Install comfy-test (always fresh) ---
       - name: Install comfy-test
         shell: powershell
