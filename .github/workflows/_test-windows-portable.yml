@@ -95,56 +95,55 @@ jobs:
           git clone --depth 1 https://github.com/PozzettiAndrea/ComfyUI-validate-endpoint.git "$env:COMFYUI_DIR\custom_nodes\ComfyUI-validate-endpoint"
           $true
 
-      # --- Run tests (server + tests in one step so server survives) ---
-      - name: Run tests
-        shell: powershell
-        working-directory: ${{ github.workspace }}\ComfyUI_windows_portable
+      # --- Start server ---
+      - name: Start ComfyUI server
+        shell: bash
+        working-directory: ${{ github.workspace }}/ComfyUI_windows_portable
         run: |
-          New-Item -ItemType Directory -Force -Path $env:COMFY_TEST_LOGS_DIR | Out-Null
-          $env:COMFY_ENV_DEBUG = "1"
-          $pythonDir = Split-Path $env:PYTHON_EXE
-          $env:PATH = "$pythonDir;$pythonDir\Scripts;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem"
-          $serverProcess = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "run_cpu.bat > `"$env:COMFY_TEST_LOGS_DIR\server.log`" 2> `"$env:COMFY_TEST_LOGS_DIR\server_stderr.log`"" -NoNewWindow -PassThru
+          mkdir -p "$COMFY_TEST_LOGS_DIR"
+          export COMFY_ENV_DEBUG=1
+          pythonDir=$(dirname "$PYTHON_EXE")
+          export PATH="$pythonDir:$pythonDir/Scripts:$PATH"
+          "$PYTHON_EXE" -s -u ComfyUI/main.py --cpu --windows-standalone-build > "$COMFY_TEST_LOGS_DIR/server.log" 2>&1 &
+          echo "SERVER_PID=$!" >> $GITHUB_ENV
 
-          Write-Host "Waiting for server (up to 5 minutes)..."
-          $serverReady = $false
-          for ($i = 1; $i -le 300; $i++) {
-            if ($serverProcess.HasExited) {
-              Write-Host "Server process died! (exit code: $($serverProcess.ExitCode))"
-              Write-Host "=== SERVER STDOUT ==="
-              Get-Content "$env:COMFY_TEST_LOGS_DIR\server.log" -ErrorAction SilentlyContinue
-              Write-Host "=== SERVER STDERR ==="
-              Get-Content "$env:COMFY_TEST_LOGS_DIR\server_stderr.log" -ErrorAction SilentlyContinue
+      - name: Wait for server
+        shell: bash
+        run: |
+          for i in $(seq 1 300); do
+            if ! kill -0 $SERVER_PID 2>/dev/null; then
+              echo "Server process died!"
+              cat "$COMFY_TEST_LOGS_DIR/server.log" || true
               exit 1
-            }
-            try {
-              Invoke-WebRequest -Uri "http://127.0.0.1:8188/system_stats" -UseBasicParsing -ErrorAction Stop | Out-Null
-              Write-Host "Server ready after ${i}s"
-              $serverReady = $true
-              break
-            } catch { Start-Sleep -Seconds 1 }
-          }
-          if (-not $serverReady) {
-            Write-Host "Server failed to start"
-            Write-Host "=== SERVER STDOUT ==="
-            Get-Content "$env:COMFY_TEST_LOGS_DIR\server.log" -ErrorAction SilentlyContinue
-            Write-Host "=== SERVER STDERR ==="
-            Get-Content "$env:COMFY_TEST_LOGS_DIR\server_stderr.log" -ErrorAction SilentlyContinue
-            Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
-            exit 1
-          }
+            fi
+            if curl -s http://127.0.0.1:8188/system_stats > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              echo "=== Server startup log ==="
+              cat "$COMFY_TEST_LOGS_DIR/server.log" || true
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server failed to start"
+          cat "$COMFY_TEST_LOGS_DIR/server.log" || true
+          exit 1
 
-          Set-Location "$env:COMFYUI_DIR\custom_nodes\$env:NODE_NAME"
-          & $env:PYTHON_EXE -m comfy_test run --server-url http://127.0.0.1:8188
-          $testExitCode = $LASTEXITCODE
+      # --- Run tests ---
+      - name: Run tests
+        shell: bash
+        working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
+        run: "$PYTHON_EXE" -m comfy_test run --server-url http://127.0.0.1:8188
 
-          Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
-          exit $testExitCode
+      # --- Cleanup ---
+      - name: Stop server
+        if: always()
+        shell: bash
+        run: kill $SERVER_PID 2>/dev/null || true
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: results-windows-portable-cpu
-          path: ${{ env.COMFY_TEST_LOGS_DIR }}\
+          path: ${{ env.COMFY_TEST_LOGS_DIR }}/
           if-no-files-found: ignore
           include-hidden-files: true
