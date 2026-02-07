@@ -158,6 +158,8 @@ def run(ctx: LevelContext) -> LevelContext:
         ctx.log("WARNING: Screenshots disabled (playwright not installed)")
         ScreenshotError = Exception  # Fallback for error handling
 
+    ctx.log(f"Execution path: {'browser (Playwright)' if ws else 'Python converter'}")
+
     # Initialize results tracking
     results = []
     logs_dir = ctx.output_base / "logs"
@@ -203,15 +205,27 @@ def run(ctx: LevelContext) -> LevelContext:
                 if ws and videos_dir:
                     workflow_video_dir = videos_dir / workflow_file.stem
                     final_screenshot_path = screenshots_dir / f"{workflow_file.stem}_executed.png"
-                    frames = ws.capture_execution_frames(
-                        _resolve_workflow_path(ctx, workflow_file),
-                        output_dir=workflow_video_dir,
-                        log_lines=current_workflow_log,
-                        webp_quality=60,
-                        final_screenshot_path=final_screenshot_path,
-                        final_screenshot_delay_ms=5000,
-                    )
-                    capture_log(f"    Captured {len(frames)} video frames")
+                    try:
+                        frames = ws.capture_execution_frames(
+                            _resolve_workflow_path(ctx, workflow_file),
+                            output_dir=workflow_video_dir,
+                            log_lines=current_workflow_log,
+                            webp_quality=60,
+                            final_screenshot_path=final_screenshot_path,
+                            final_screenshot_delay_ms=5000,
+                        )
+                        capture_log(f"    Captured {len(frames)} video frames")
+                    except (WorkflowError, ScreenshotError) as browser_err:
+                        if "class_type" in str(browser_err):
+                            capture_log(f"    Browser execution failed: {browser_err.message}")
+                            capture_log("    Retrying with Python converter...")
+                            result = runner.run_workflow(
+                                _resolve_workflow_path(ctx, workflow_file),
+                                timeout=get_workflow_timeout(ctx.config.workflow.timeout),
+                            )
+                            capture_log(f"    Status: {result.status}")
+                        else:
+                            raise
                 else:
                     result = runner.run_workflow(
                         workflow_file,

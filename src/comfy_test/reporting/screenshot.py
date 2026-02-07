@@ -341,6 +341,22 @@ class WorkflowScreenshot:
                     // Get API format using browser's converter
                     const { output } = await window.app.graphToPrompt();
 
+                    // Diagnostic: check conversion quality
+                    const nodeIds = Object.keys(output || {});
+                    const nodesWithoutClassType = nodeIds.filter(id => !output[id] || !output[id].class_type);
+                    const sample = nodeIds.length > 0 ? JSON.stringify(output[nodeIds[0]]).substring(0, 300) : 'empty';
+                    const diag = `graphToPrompt: ${nodeIds.length} nodes, missing class_type: [${nodesWithoutClassType.join(',')}], sample: ${sample}`;
+                    console.log('[comfy-test] ' + diag);
+
+                    if (nodesWithoutClassType.length > 0) {
+                        return {
+                            success: false,
+                            error: {
+                                message: 'graphToPrompt produced nodes without class_type: ' + diag
+                            }
+                        };
+                    }
+
                     // Validate via /validate endpoint
                     const validateResp = await fetch('/validate', {
                         method: 'POST',
@@ -390,6 +406,7 @@ class WorkflowScreenshot:
             details = error_msg
             if node_errors:
                 details += f"\nNode errors:\n{json.dumps(node_errors, indent=2)}"
+            self._log(f"  Validation failed: {details}")
             raise ScreenshotError("Workflow validation failed", details)
 
     def __enter__(self) -> "WorkflowScreenshot":
