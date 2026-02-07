@@ -103,25 +103,22 @@ jobs:
           git clone --depth 1 https://github.com/PozzettiAndrea/ComfyUI-validate-endpoint.git "$env:COMFYUI_DIR\custom_nodes\ComfyUI-validate-endpoint"
           $true
 
-      # --- Start server ---
-      - name: Start ComfyUI server
+      # --- Run tests (server + tests in one step so server survives) ---
+      - name: Run tests
         shell: powershell
+        working-directory: ${{ env.COMFYUI_DIR }}\custom_nodes\${{ env.NODE_NAME }}
         run: |
           New-Item -ItemType Directory -Force -Path $env:COMFY_TEST_LOGS_DIR | Out-Null
           $env:PATH = "$env:VENV\Scripts;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem"
           $serverProcess = Start-Process -FilePath "$env:VENV\Scripts\python" `
             -ArgumentList "-u", "$env:COMFYUI_DIR\main.py", "--listen", "127.0.0.1", "--port", "8188", "--cpu" `
             -NoNewWindow -PassThru -RedirectStandardOutput "$env:COMFY_TEST_LOGS_DIR\server.log" -RedirectStandardError "$env:COMFY_TEST_LOGS_DIR\server_stderr.log"
-          echo "SERVER_PID=$($serverProcess.Id)" >> $env:GITHUB_ENV
 
-      - name: Wait for server
-        shell: powershell
-        run: |
+          Write-Host "Waiting for server (up to 5 minutes)..."
           $serverReady = $false
           for ($i = 1; $i -le 300; $i++) {
-            $proc = Get-Process -Id $env:SERVER_PID -ErrorAction SilentlyContinue
-            if (-not $proc -or $proc.HasExited) {
-              Write-Host "Server process died! (exit code: $($proc.ExitCode))"
+            if ($serverProcess.HasExited) {
+              Write-Host "Server process died! (exit code: $($serverProcess.ExitCode))"
               Write-Host "=== SERVER STDOUT ==="
               Get-Content "$env:COMFY_TEST_LOGS_DIR\server.log" -ErrorAction SilentlyContinue
               Write-Host "=== SERVER STDERR ==="
@@ -131,8 +128,6 @@ jobs:
             try {
               Invoke-WebRequest -Uri "http://127.0.0.1:8188/system_stats" -UseBasicParsing -ErrorAction Stop | Out-Null
               Write-Host "Server ready after ${i}s"
-              Write-Host "=== Server startup log ==="
-              Get-Content "$env:COMFY_TEST_LOGS_DIR\server.log" -ErrorAction SilentlyContinue
               $serverReady = $true
               break
             } catch { Start-Sleep -Seconds 1 }
@@ -143,22 +138,15 @@ jobs:
             Get-Content "$env:COMFY_TEST_LOGS_DIR\server.log" -ErrorAction SilentlyContinue
             Write-Host "=== SERVER STDERR ==="
             Get-Content "$env:COMFY_TEST_LOGS_DIR\server_stderr.log" -ErrorAction SilentlyContinue
+            Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
             exit 1
           }
 
-      # --- Run tests ---
-      - name: Run tests
-        shell: powershell
-        working-directory: ${{ env.COMFYUI_DIR }}\custom_nodes\${{ env.NODE_NAME }}
-        run: |
           & "$env:VENV\Scripts\python" -m comfy_test run --server-url http://127.0.0.1:8188
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $testExitCode = $LASTEXITCODE
 
-      # --- Cleanup ---
-      - name: Stop server
-        if: always()
-        shell: powershell
-        run: Stop-Process -Id $env:SERVER_PID -Force -ErrorAction SilentlyContinue
+          Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
+          exit $testExitCode
 
       - uses: actions/upload-artifact@v4
         if: always()
