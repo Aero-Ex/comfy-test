@@ -137,7 +137,8 @@ jobs:
       - name: Run tests
         shell: bash
         working-directory: ${{ env.COMFYUI_DIR }}/custom_nodes/${{ env.NODE_NAME }}
-        run: "$VENV/Scripts/python" -m comfy_test run --server-url http://127.0.0.1:8188
+        run: |
+          "$VENV/Scripts/python" -m comfy_test run --server-url http://127.0.0.1:8188
 
       # --- Cleanup ---
       - name: Stop server
